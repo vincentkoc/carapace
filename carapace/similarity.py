@@ -119,6 +119,10 @@ def _salient_title_tokens(fp: Fingerprint) -> set[str]:
 
 
 def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
+    start = time.perf_counter()
+    total = len(fingerprints)
+    logger.info("Building similarity candidate index for %s entities", total)
+
     by_module: dict[str, set[str]] = defaultdict(set)
     by_issue: dict[str, set[str]] = defaultdict(set)
     by_soft_issue: dict[str, set[str]] = defaultdict(set)
@@ -132,7 +136,7 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
     simhash_values: dict[str, int] = {}
     winnow_sets: dict[str, set[int]] = {}
 
-    for entity_id, fp in fingerprints.items():
+    for counter, (entity_id, fp) in enumerate(fingerprints.items(), start=1):
         for module in fp.module_buckets:
             by_module[module].add(entity_id)
         for issue in fp.linked_issues:
@@ -165,6 +169,29 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
         winnow_sets[entity_id] = winnow
         for hash_value in winnow:
             by_winnow_hash[hash_value].add(entity_id)
+
+        if total >= 1000 and (counter % 500 == 0 or counter == total):
+            logger.info(
+                "Candidate index progress: %s/%s entities, elapsed=%.2fs",
+                counter,
+                total,
+                time.perf_counter() - start,
+            )
+        elif counter % 100 == 0 or counter == total:
+            logger.debug(
+                "Candidate index progress: %s/%s entities, elapsed=%.2fs",
+                counter,
+                total,
+                time.perf_counter() - start,
+            )
+
+    logger.info(
+        "Candidate index complete in %.2fs (modules=%s issues=%s files=%s)",
+        time.perf_counter() - start,
+        len(by_module),
+        len(by_issue),
+        len(by_file),
+    )
 
     return CandidateIndex(
         by_module=by_module,
