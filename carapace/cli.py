@@ -121,6 +121,17 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
     process.add_argument("--output-dir", default="./carapace-out", help="Output directory")
     process.add_argument("--limit", type=int, default=0, help="Optional processing cap (0 = all loaded entities)")
+    process.add_argument(
+        "--enrich-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enrich missing PR details from GitHub before processing",
+    )
+    process.add_argument(
+        "--enrich-comments",
+        action="store_true",
+        help="When enriching, also fetch issue comments (slower; needed for external review signal extraction)",
+    )
     process.add_argument("--apply-routing", action="store_true", help="Apply labels/comments using routing decisions")
     process.add_argument(
         "--live-actions",
@@ -200,6 +211,26 @@ def _run_process_stored(args: argparse.Namespace) -> int:
         raise ValueError("process-stored currently requires storage.backend=sqlite")
 
     storage = SQLiteStorage(config.storage.sqlite_path)
+    state = storage.get_ingest_state(args.repo)
+    if not state["completed"]:
+        logger.warning(
+            "Ingest state for %s is incomplete (phase=%s, pr_next_page=%s, issue_next_page=%s). "
+            "Processing partial snapshot.",
+            args.repo,
+            state["phase"],
+            state["pr_next_page"],
+            state["issue_next_page"],
+        )
+
+    quality = storage.ingest_quality_stats(args.repo)
+    logger.info(
+        "Ingest quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s",
+        quality["total"],
+        quality["missing_changed_files"],
+        quality["missing_diff_hunks"],
+        quality["ci_unknown"],
+    )
+
     entities = storage.load_ingested_entities(
         repo=args.repo,
         include_closed=config.ingest.include_closed,
@@ -209,6 +240,33 @@ def _run_process_stored(args: argparse.Namespace) -> int:
         entities = entities[: args.limit]
 
     logger.info("Loaded %s ingested entities for processing", len(entities))
+
+    if args.enrich_missing:
+        connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
+        enriched: list[SourceEntity] = []
+        targets = 0
+        for entity in entities:
+            needs = entity.kind.value == "pr" and (
+                len(entity.changed_files) == 0 or entity.ci_status.value == "unknown"
+            )
+            if needs:
+                targets += 1
+        if targets:
+            logger.info("Enriching %s PR entities with missing details", targets)
+        for idx, entity in enumerate(entities, start=1):
+            needs = entity.kind.value == "pr" and (
+                len(entity.changed_files) == 0 or entity.ci_status.value == "unknown"
+            )
+            if needs:
+                entity = connector.enrich_entity(entity, include_comments=args.enrich_comments)
+            enriched.append(entity)
+            if idx % 100 == 0 or idx == len(entities):
+                logger.debug("Enrichment progress: %s/%s", idx, len(entities))
+        entities = enriched
+        if targets:
+            storage.upsert_ingest_entities(args.repo, entities)
+            logger.info("Persisted enriched entity data back to SQLite")
+
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
     write_report_bundle(report, args.output_dir)

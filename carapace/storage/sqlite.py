@@ -306,3 +306,31 @@ class SQLiteStorage:
                 ),
             )
             conn.commit()
+
+    def ingest_quality_stats(self, repo: str) -> dict[str, int]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.changed_files')), 0) = 0 THEN 1 ELSE 0 END) AS missing_changed_files,
+                  SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.diff_hunks')), 0) = 0 THEN 1 ELSE 0 END) AS missing_diff_hunks,
+                  SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.ci_status'), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS ci_unknown
+                FROM ingest_entities
+                WHERE repo = ?
+                """,
+                (repo,),
+            ).fetchone()
+        if row is None:
+            return {
+                "total": 0,
+                "missing_changed_files": 0,
+                "missing_diff_hunks": 0,
+                "ci_unknown": 0,
+            }
+        return {
+            "total": int(row["total"] or 0),
+            "missing_changed_files": int(row["missing_changed_files"] or 0),
+            "missing_diff_hunks": int(row["missing_diff_hunks"] or 0),
+            "ci_unknown": int(row["ci_unknown"] or 0),
+        }

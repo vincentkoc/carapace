@@ -225,10 +225,24 @@ class GithubGhSourceConnector(SourceConnector):
         kind, number = self._parse_entity_id(entity_id)
         if kind == EntityKind.PR:
             payload = self.client._api_json(f"pulls/{number}")
-            return self._normalize_pull(GithubPull.model_validate(payload))
+            return self._normalize_pull(
+                GithubPull.model_validate(payload),
+                enrich_details=True,
+                enrich_comments=False,
+            )
         payload = self.client._api_json(f"issues/{number}")
         issue = GithubIssue.model_validate(payload)
         return self._normalize_issue(issue)
+
+    def enrich_entity(self, entity: SourceEntity, include_comments: bool = False) -> SourceEntity:
+        if entity.kind != EntityKind.PR or entity.number is None:
+            return entity
+        payload = self.client._api_json(f"pulls/{entity.number}")
+        return self._normalize_pull(
+            GithubPull.model_validate(payload),
+            enrich_details=True,
+            enrich_comments=include_comments,
+        )
 
     def get_diff_or_change_set(self, entity_id: str) -> dict:
         kind, number = self._parse_entity_id(entity_id)
