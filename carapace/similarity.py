@@ -297,5 +297,13 @@ def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: Similari
                 len(edges),
                 time.perf_counter() - start,
             )
+        if (total >= 1000 and counter % 500 == 0) or counter == total:
+            logger.info(
+                "Similarity progress: %s/%s entities, edges=%s, elapsed=%.2fs",
+                counter,
+                total,
+                len(edges),
+                time.perf_counter() - start,
+            )
 
     return edges

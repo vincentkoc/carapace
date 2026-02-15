@@ -53,8 +53,8 @@ def _load_config(args: argparse.Namespace) -> CarapaceConfig:
     )
 
 
-def _build_engine(config: CarapaceConfig) -> CarapaceEngine:
-    return CarapaceEngine(config=config)
+def _build_engine(config: CarapaceConfig, storage: SQLiteStorage | None = None) -> CarapaceEngine:
+    return CarapaceEngine(config=config, storage=storage)
 
 
 def _add_common_config_flags(cmd: argparse.ArgumentParser) -> None:
@@ -442,7 +442,7 @@ def _run_process_stored(args: argparse.Namespace) -> int:
     ]
     logger.info("Entities after post-enrichment state filtering: %s", len(entities))
 
-    engine = _build_engine(config)
+    engine = _build_engine(config, storage=storage)
     report = engine.scan_entities(entities)
     write_report_bundle(report, args.output_dir)
     _maybe_apply_routing(args, entities, report)

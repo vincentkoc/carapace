@@ -1,6 +1,7 @@
 from carapace.config import CarapaceConfig
 from carapace.models import CIStatus, EntityKind, ExternalReviewSignal, SourceEntity
 from carapace.pipeline import CarapaceEngine
+from carapace.storage import SQLiteStorage
 
 
 def _entity(entity_id: str, **kwargs) -> SourceEntity:
@@ -64,3 +65,33 @@ def test_end_to_end_similarity_and_canonical() -> None:
     assert "triage/canonical" in routing["1"]
     assert "triage/duplicate" in routing["2"]
     assert "triage/noise-suppressed" in routing["4"]
+
+
+def test_pipeline_uses_fingerprint_cache_across_runs(tmp_path) -> None:
+    class CountingEmbeddingProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def model_id(self) -> str:
+            return "counting-model"
+
+        def dimensions(self) -> int:
+            return 4
+
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+    storage = SQLiteStorage(tmp_path / "carapace.db")
+    provider = CountingEmbeddingProvider()
+    engine = CarapaceEngine(config=CarapaceConfig(), embedding_provider=provider, storage=storage)
+
+    entities = [
+        _entity("pr:1", repo="acme/repo"),
+        _entity("pr:2", repo="acme/repo", title="Another"),
+    ]
+    engine.scan_entities(entities)
+    assert provider.calls == 1
+
+    engine.scan_entities(entities)
+    assert provider.calls == 1

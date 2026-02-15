@@ -88,6 +88,7 @@ Notes:
 - Enrichment now logs progress at INFO with rate and ETA.
 - Enrichment writes back to SQLite in batches (`--enrich-flush-every`) so interrupted runs can resume without losing all progress.
 - `minimal` enrichment uses a fast files-only API path and records watermarks by PR `updated_at`.
+- Processing now reuses a warm fingerprint cache in SQLite (keyed by repo/entity/model/updated_at), so repeat runs avoid recomputing unchanged embeddings/fingerprints.
 
 Enrichment watermark behavior:
 - Enrichment is tracked per PR by `updated_at` revision.

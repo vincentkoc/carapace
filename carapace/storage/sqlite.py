@@ -105,6 +105,17 @@ class SQLiteStorage:
 
                 CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_state ON ingest_entities(repo, state, is_draft);
                 CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_kind_state_num ON ingest_entities(repo, kind, state, number);
+
+                CREATE TABLE IF NOT EXISTS fingerprint_cache (
+                  repo TEXT NOT NULL,
+                  entity_id TEXT NOT NULL,
+                  model_id TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  computed_at TEXT NOT NULL,
+                  PRIMARY KEY (repo, entity_id, model_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_fingerprint_cache_repo_model ON fingerprint_cache(repo, model_id);
                 """
             )
             self._ensure_ingest_columns(conn)
@@ -481,6 +492,82 @@ class SQLiteStorage:
             )
             conn.commit()
             return int(cursor.rowcount if cursor.rowcount is not None else 0)
+
+    def load_fingerprint_cache(
+        self,
+        repo: str,
+        entities: list[SourceEntity],
+        *,
+        model_id: str,
+    ) -> dict[str, Fingerprint]:
+        if not entities:
+            return {}
+        expected_updates = {entity.id: entity.updated_at.isoformat() for entity in entities}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT entity_id, updated_at, payload_json
+                FROM fingerprint_cache
+                WHERE repo = ? AND model_id = ?
+                """,
+                (repo, model_id),
+            ).fetchall()
+
+        out: dict[str, Fingerprint] = {}
+        for row in rows:
+            entity_id = row["entity_id"]
+            expected = expected_updates.get(entity_id)
+            if expected is None or row["updated_at"] != expected:
+                continue
+            try:
+                out[entity_id] = Fingerprint.model_validate_json(row["payload_json"])
+            except Exception:
+                continue
+        return out
+
+    def upsert_fingerprint_cache(
+        self,
+        repo: str,
+        entities: list[SourceEntity],
+        fingerprints: dict[str, Fingerprint],
+        *,
+        model_id: str,
+    ) -> int:
+        rows: list[tuple[str, str, str, str, str, str]] = []
+        now = datetime.now(UTC).isoformat()
+        for entity in entities:
+            fp = fingerprints.get(entity.id)
+            if fp is None:
+                continue
+            rows.append(
+                (
+                    repo,
+                    entity.id,
+                    model_id,
+                    entity.updated_at.isoformat(),
+                    fp.model_dump_json(),
+                    now,
+                )
+            )
+
+        if not rows:
+            return 0
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO fingerprint_cache (
+                  repo, entity_id, model_id, updated_at, payload_json, computed_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo, entity_id, model_id) DO UPDATE SET
+                  updated_at=excluded.updated_at,
+                  payload_json=excluded.payload_json,
+                  computed_at=excluded.computed_at
+                """,
+                rows,
+            )
+            conn.commit()
+        return len(rows)
 
     def ingest_audit_summary(self, repo: str) -> dict:
         with self._connect() as conn:

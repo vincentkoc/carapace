@@ -118,6 +118,12 @@ class CarapaceEngine:
             suppressed,
             skipped,
         )
+        logger.info(
+            "Low-pass complete: active=%s suppressed=%s skipped=%s",
+            len(active_entities),
+            suppressed,
+            skipped,
+        )
         if reason_counts:
             logger.debug("Low-pass reason counts: %s", dict(reason_counts))
         if len(active_entities) == len(entities):
@@ -127,12 +133,50 @@ class CarapaceEngine:
         if active_entities:
             fp_start = time.perf_counter()
             self.hooks.emit(HookName.BEFORE_FINGERPRINT, context, {})
-            texts = [f"{entity.title}\n{entity.body}" for entity in active_entities]
-            vectors = self.embedding_provider.embed_texts(texts)
-            for entity, vector in zip(active_entities, vectors):
-                fingerprints[entity.id] = build_fingerprint(entity, vector)
+            model_id = self.embedding_provider.model_id()
+
+            by_repo: dict[str, list[SourceEntity]] = {}
+            for entity in active_entities:
+                by_repo.setdefault(entity.repo, []).append(entity)
+
+            if self.storage and hasattr(self.storage, "load_fingerprint_cache"):
+                for repo, repo_entities in by_repo.items():
+                    cached = self.storage.load_fingerprint_cache(  # type: ignore[attr-defined]
+                        repo,
+                        repo_entities,
+                        model_id=model_id,
+                    )
+                    fingerprints.update(cached)
+
+            to_compute = [entity for entity in active_entities if entity.id not in fingerprints]
+            logger.info(
+                "Fingerprint cache: hits=%s misses=%s",
+                len(fingerprints),
+                len(to_compute),
+            )
+
+            if to_compute:
+                texts = [f"{entity.title}\n{entity.body}" for entity in to_compute]
+                vectors = self.embedding_provider.embed_texts(texts)
+                for entity, vector in zip(to_compute, vectors):
+                    fingerprints[entity.id] = build_fingerprint(entity, vector)
+
+                if self.storage and hasattr(self.storage, "upsert_fingerprint_cache"):
+                    computed_ids = {item.id for item in to_compute}
+                    for repo, repo_entities in by_repo.items():
+                        self.storage.upsert_fingerprint_cache(  # type: ignore[attr-defined]
+                            repo,
+                            [entity for entity in repo_entities if entity.id in computed_ids],
+                            fingerprints,
+                            model_id=model_id,
+                        )
             self.hooks.emit(HookName.AFTER_FINGERPRINT, context, {"count": len(fingerprints)})
             logger.debug(
+                "Fingerprinting complete: %s fingerprints in %.2fs",
+                len(fingerprints),
+                time.perf_counter() - fp_start,
+            )
+            logger.info(
                 "Fingerprinting complete: %s fingerprints in %.2fs",
                 len(fingerprints),
                 time.perf_counter() - fp_start,
@@ -150,6 +194,12 @@ class CarapaceEngine:
             len(clusters),
             time.perf_counter() - sim_start,
         )
+        logger.info(
+            "Similarity complete: edges=%s clusters=%s in %.2fs",
+            len(edges),
+            len(clusters),
+            time.perf_counter() - sim_start,
+        )
 
         canonical_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_CANONICAL, context, {})
@@ -160,11 +210,17 @@ class CarapaceEngine:
             len(canonical),
             time.perf_counter() - canonical_start,
         )
+        logger.info(
+            "Canonical ranking complete: %s cluster decisions in %.2fs",
+            len(canonical),
+            time.perf_counter() - canonical_start,
+        )
 
         self.hooks.emit(HookName.BEFORE_ACTION, context, {})
         routing = self._build_routing(entities, low_pass, canonical)
         self.hooks.emit(HookName.AFTER_ACTION, context, {"routing": len(routing)})
         logger.debug("Routing decisions generated: %s", len(routing))
+        logger.info("Routing decisions generated: %s", len(routing))
 
         report = EngineReport(
             processed_entities=len(entities),

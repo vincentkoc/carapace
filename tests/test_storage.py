@@ -1,7 +1,8 @@
 from pathlib import Path
+from datetime import timedelta
 
 from carapace.config import CarapaceConfig, StorageConfig
-from carapace.models import EntityKind, SourceEntity
+from carapace.models import EntityKind, Fingerprint, SourceEntity
 from carapace.pipeline import CarapaceEngine
 from carapace.storage import SQLiteStorage
 
@@ -297,3 +298,33 @@ def test_ingest_audit_summary_reports_integrity(tmp_path: Path) -> None:
     assert summary["integrity"]["kind_payload_mismatch"] == 1
     assert summary["integrity"]["repo_payload_mismatch"] == 1
     assert summary["integrity"]["entity_number_mismatch"] == 1
+
+
+def test_fingerprint_cache_respects_updated_at(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+    entity = SourceEntity.model_validate(
+        {
+            "id": "pr:1",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "state": "open",
+            "title": "PR",
+            "author": "alice",
+            "updated_at": "2026-02-15T00:00:00Z",
+        }
+    )
+    fp = Fingerprint(
+        entity_id="pr:1",
+        tokens=["a"],
+        embedding=[0.1, 0.2],
+    )
+    written = storage.upsert_fingerprint_cache("acme/repo", [entity], {"pr:1": fp}, model_id="test-model")
+    assert written == 1
+
+    hits = storage.load_fingerprint_cache("acme/repo", [entity], model_id="test-model")
+    assert "pr:1" in hits
+
+    newer_entity = entity.model_copy(update={"updated_at": entity.updated_at + timedelta(days=1)})
+    misses = storage.load_fingerprint_cache("acme/repo", [newer_entity], model_id="test-model")
+    assert misses == {}
