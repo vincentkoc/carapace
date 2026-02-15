@@ -41,6 +41,7 @@ class SimilarityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_advanced_algorithms: bool = True
+    advanced_for_issues: bool = False
     min_score: float = 0.72
     strong_score: float = 0.82
     top_k_candidates: int = 64

@@ -53,6 +53,10 @@ _TITLE_SALIENT_STOPWORDS = {
 }
 
 
+def _kind(entity_id: str) -> str:
+    return entity_id.split(":", maxsplit=1)[0] if ":" in entity_id else ""
+
+
 @dataclass
 class CandidateIndex:
     by_module: dict[str, set[str]]
@@ -121,6 +125,7 @@ def _salient_title_tokens(fp: Fingerprint) -> set[str]:
 def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
     start = time.perf_counter()
     total = len(fingerprints)
+    last_info_elapsed = -1.0
     logger.info("Building similarity candidate index for %s entities", total)
 
     by_module: dict[str, set[str]] = defaultdict(set)
@@ -146,43 +151,45 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
         for path in fp.changed_files:
             by_file[path].add(entity_id)
 
-        if not cfg.use_advanced_algorithms:
-            continue
+        use_advanced = cfg.use_advanced_algorithms and (_kind(entity_id) != "issue" or cfg.advanced_for_issues)
+        if use_advanced:
+            tokens = _material_tokens(fp)
 
-        tokens = _material_tokens(fp)
-
-        signature = minhash_signature(
-            tokens,
-            num_perm=cfg.minhash_num_perm,
-            shingle_k=cfg.minhash_shingle_k,
-        )
-        minhash_signatures[entity_id] = signature
-        for band in minhash_lsh_bands(signature, bands=cfg.minhash_bands):
-            by_lsh_band[band].add(entity_id)
-
-        simhash_value = simhash64(tokens, bits=cfg.simhash_bits)
-        simhash_values[entity_id] = simhash_value
-        for chunk in simhash_chunks(simhash_value, bits=cfg.simhash_bits, chunk_bits=cfg.simhash_chunk_bits):
-            by_simhash_chunk[chunk].add(entity_id)
-
-        winnow = winnowing_fingerprints(tokens, k=cfg.winnow_kgram, window=cfg.winnow_window)
-        winnow_sets[entity_id] = winnow
-        for hash_value in winnow:
-            by_winnow_hash[hash_value].add(entity_id)
-
-        if total >= 1000 and (counter % 500 == 0 or counter == total):
-            logger.info(
-                "Candidate index progress: %s/%s entities, elapsed=%.2fs",
-                counter,
-                total,
-                time.perf_counter() - start,
+            signature = minhash_signature(
+                tokens,
+                num_perm=cfg.minhash_num_perm,
+                shingle_k=cfg.minhash_shingle_k,
             )
+            minhash_signatures[entity_id] = signature
+            for band in minhash_lsh_bands(signature, bands=cfg.minhash_bands):
+                by_lsh_band[band].add(entity_id)
+
+            simhash_value = simhash64(tokens, bits=cfg.simhash_bits)
+            simhash_values[entity_id] = simhash_value
+            for chunk in simhash_chunks(simhash_value, bits=cfg.simhash_bits, chunk_bits=cfg.simhash_chunk_bits):
+                by_simhash_chunk[chunk].add(entity_id)
+
+            winnow = winnowing_fingerprints(tokens, k=cfg.winnow_kgram, window=cfg.winnow_window)
+            winnow_sets[entity_id] = winnow
+            for hash_value in winnow:
+                by_winnow_hash[hash_value].add(entity_id)
+
+        elapsed = time.perf_counter() - start
+        if total >= 1000 and (counter % 500 == 0 or counter == total):
+            if (elapsed >= 1.0 and elapsed - last_info_elapsed >= 5.0) or counter == total:
+                logger.info(
+                    "Candidate index progress: %s/%s entities, elapsed=%.2fs",
+                    counter,
+                    total,
+                    elapsed,
+                )
+                last_info_elapsed = elapsed
         elif counter % 100 == 0 or counter == total:
             logger.debug(
                 "Candidate index progress: %s/%s entities, elapsed=%.2fs",
                 counter,
                 total,
-                time.perf_counter() - start,
+                elapsed,
             )
 
     logger.info(
@@ -231,7 +238,8 @@ def retrieve_candidates(
     for path in fp.changed_files:
         bump(idx.by_file.get(path, set()))
 
-    if cfg.use_advanced_algorithms:
+    use_advanced = cfg.use_advanced_algorithms and (_kind(entity_id) != "issue" or cfg.advanced_for_issues)
+    if use_advanced:
         signature = idx.minhash_signatures.get(entity_id)
         if signature:
             for band in minhash_lsh_bands(signature, bands=cfg.minhash_bands):
@@ -418,6 +426,7 @@ def compute_similarity_edges_with_stats(
     pair_seen: set[tuple[str, str]] = set()
     edges: list[SimilarityEdge] = []
     stats = SimilarityComputationStats(entities_total=len(fingerprints))
+    last_info_elapsed = -1.0
 
     total = len(fingerprints)
     for counter, (entity_id, fp) in enumerate(fingerprints.items(), start=1):
@@ -447,22 +456,25 @@ def compute_similarity_edges_with_stats(
             )
             stats.edges_emitted += 1
 
+        elapsed = time.perf_counter() - start
         if counter % 100 == 0 or counter == total:
             logger.debug(
                 "Similarity progress: %s/%s entities, edges=%s, elapsed=%.2fs",
                 counter,
                 total,
                 len(edges),
-                time.perf_counter() - start,
+                elapsed,
             )
         if (total >= 1000 and counter % 500 == 0) or counter == total:
-            logger.info(
-                "Similarity progress: %s/%s entities, edges=%s, elapsed=%.2fs",
-                counter,
-                total,
-                len(edges),
-                time.perf_counter() - start,
-            )
+            if (elapsed >= 1.0 and elapsed - last_info_elapsed >= 5.0) or counter == total:
+                logger.info(
+                    "Similarity progress: %s/%s entities, edges=%s, elapsed=%.2fs",
+                    counter,
+                    total,
+                    len(edges),
+                    elapsed,
+                )
+                last_info_elapsed = elapsed
 
     return edges, stats
 
