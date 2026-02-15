@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -18,6 +20,8 @@ from carapace.algorithms import (
 )
 from carapace.config import SimilarityConfig
 from carapace.models import EdgeTier, Fingerprint, SimilarityBreakdown, SimilarityEdge
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -255,11 +259,13 @@ def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConf
 
 
 def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> list[SimilarityEdge]:
+    start = time.perf_counter()
     idx = build_candidate_index(fingerprints, cfg)
     pair_seen: set[tuple[str, str]] = set()
     edges: list[SimilarityEdge] = []
 
-    for entity_id, fp in fingerprints.items():
+    total = len(fingerprints)
+    for counter, (entity_id, fp) in enumerate(fingerprints.items(), start=1):
         candidates = retrieve_candidates(entity_id, fp, idx, cfg)
         for other_id in candidates:
             a, b = sorted((entity_id, other_id))
@@ -281,6 +287,15 @@ def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: Similari
                     tier=tier,
                     breakdown=breakdown,
                 )
+            )
+
+        if counter % 100 == 0 or counter == total:
+            logger.debug(
+                "Similarity progress: %s/%s entities, edges=%s, elapsed=%.2fs",
+                counter,
+                total,
+                len(edges),
+                time.perf_counter() - start,
             )
 
     return edges

@@ -36,6 +36,14 @@ def apply_low_pass(entity: SourceEntity, cfg: LowPassConfig) -> LowPassDecision:
     hard_skip = {label.lower() for label in cfg.hard_skip_labels}
     soft_suppress = {label.lower() for label in cfg.soft_suppress_labels}
 
+    if cfg.skip_closed and entity.state.lower() != "open":
+        reasons.append("CLOSED_STATE")
+        return LowPassDecision(entity_id=entity.id, state=FilterState.SKIP, reason_codes=reasons, priority_weight=0.0)
+
+    if cfg.skip_drafts and entity.is_draft:
+        reasons.append("DRAFT_PR")
+        return LowPassDecision(entity_id=entity.id, state=FilterState.SKIP, reason_codes=reasons, priority_weight=0.0)
+
     if label_set & hard_skip:
         reasons.append("HARD_SKIP_LABEL")
         return LowPassDecision(entity_id=entity.id, state=FilterState.SKIP, reason_codes=reasons, priority_weight=0.0)

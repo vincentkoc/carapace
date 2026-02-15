@@ -7,6 +7,8 @@ low_pass:
   soft_suppress_labels:
     - question
     - discussion
+  skip_closed: true
+  skip_drafts: true
   boost_labels:
     security: 1.5
     regression: 1.5

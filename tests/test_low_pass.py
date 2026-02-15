@@ -24,6 +24,20 @@ def test_hard_skip_label() -> None:
     assert out.state == FilterState.SKIP
 
 
+def test_closed_state_skips() -> None:
+    e = _entity(state="closed")
+    out = apply_low_pass(e, LowPassConfig(skip_closed=True))
+    assert out.state == FilterState.SKIP
+    assert "CLOSED_STATE" in out.reason_codes
+
+
+def test_draft_skips() -> None:
+    e = _entity(is_draft=True)
+    out = apply_low_pass(e, LowPassConfig(skip_drafts=True))
+    assert out.state == FilterState.SKIP
+    assert "DRAFT_PR" in out.reason_codes
+
+
 def test_docs_only_suppression() -> None:
     e = _entity(changed_files=["docs/readme.md"], ci_status=CIStatus.UNKNOWN)
     out = apply_low_pass(e, LowPassConfig())

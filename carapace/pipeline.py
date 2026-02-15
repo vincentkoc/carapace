@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
+from collections import Counter
 
 from carapace.canonical import rank_canonicals
 from carapace.config import CarapaceConfig, load_effective_config
@@ -77,6 +79,7 @@ class CarapaceEngine:
         return cls(config=config, embedding_provider=embedding_provider, hooks=hooks, storage=storage)
 
     def scan_entities(self, entities: list[SourceEntity]) -> EngineReport:
+        scan_start = time.perf_counter()
         logger.info("Starting scan for %s entities", len(entities))
         context = {"entity_count": len(entities)}
         self.hooks.emit(HookName.BEFORE_LOW_PASS, context, {})
@@ -96,6 +99,10 @@ class CarapaceEngine:
             else:
                 skipped += 1
 
+        reason_counts: Counter[str] = Counter()
+        for decision in low_pass.values():
+            reason_counts.update(decision.reason_codes)
+
         self.hooks.emit(
             HookName.AFTER_LOW_PASS,
             context,
@@ -111,28 +118,48 @@ class CarapaceEngine:
             suppressed,
             skipped,
         )
+        if reason_counts:
+            logger.debug("Low-pass reason counts: %s", dict(reason_counts))
+        if len(active_entities) == len(entities):
+            logger.debug("Low-pass passed all entities. Tune low_pass config if more suppression is expected.")
 
         fingerprints = {}
         if active_entities:
+            fp_start = time.perf_counter()
             self.hooks.emit(HookName.BEFORE_FINGERPRINT, context, {})
             texts = [f"{entity.title}\n{entity.body}" for entity in active_entities]
             vectors = self.embedding_provider.embed_texts(texts)
             for entity, vector in zip(active_entities, vectors):
                 fingerprints[entity.id] = build_fingerprint(entity, vector)
             self.hooks.emit(HookName.AFTER_FINGERPRINT, context, {"count": len(fingerprints)})
-            logger.debug("Fingerprinting complete: %s fingerprints", len(fingerprints))
+            logger.debug(
+                "Fingerprinting complete: %s fingerprints in %.2fs",
+                len(fingerprints),
+                time.perf_counter() - fp_start,
+            )
         self.last_fingerprints = fingerprints
 
+        sim_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_SIMILARITY, context, {})
         edges = compute_similarity_edges(fingerprints, self.config.similarity)
         clusters = build_clusters([entity.id for entity in active_entities], edges)
         self.hooks.emit(HookName.AFTER_SIMILARITY, context, {"edges": len(edges), "clusters": len(clusters)})
-        logger.debug("Similarity complete: edges=%s clusters=%s", len(edges), len(clusters))
+        logger.debug(
+            "Similarity complete: edges=%s clusters=%s in %.2fs",
+            len(edges),
+            len(clusters),
+            time.perf_counter() - sim_start,
+        )
 
+        canonical_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_CANONICAL, context, {})
         canonical = rank_canonicals(clusters, fingerprints, edges, low_pass, self.config.canonical)
         self.hooks.emit(HookName.AFTER_CANONICAL, context, {"decisions": len(canonical)})
-        logger.debug("Canonical ranking complete: %s cluster decisions", len(canonical))
+        logger.debug(
+            "Canonical ranking complete: %s cluster decisions in %.2fs",
+            len(canonical),
+            time.perf_counter() - canonical_start,
+        )
 
         self.hooks.emit(HookName.BEFORE_ACTION, context, {})
         routing = self._build_routing(entities, low_pass, canonical)
@@ -158,7 +185,12 @@ class CarapaceEngine:
                 embedding_model=self.embedding_provider.model_id(),
             )
             logger.debug("Run persisted via storage backend")
-        logger.info("Scan completed: processed=%s clusters=%s", len(entities), len(clusters))
+        logger.info(
+            "Scan completed: processed=%s clusters=%s total_time=%.2fs",
+            len(entities),
+            len(clusters),
+            time.perf_counter() - scan_start,
+        )
         return report
 
     def _build_routing(
