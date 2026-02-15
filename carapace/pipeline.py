@@ -128,6 +128,14 @@ class CarapaceEngine:
         )
         if reason_counts:
             logger.debug("Low-pass reason counts: %s", dict(reason_counts))
+            non_pass = {
+                key: value
+                for key, value in reason_counts.items()
+                if not key.startswith("BOOST_")
+            }
+            if non_pass:
+                top = sorted(non_pass.items(), key=lambda item: (-item[1], item[0]))[:8]
+                logger.info("Low-pass top reasons: %s", ", ".join(f"{k}={v}" for k, v in top))
         if len(active_entities) == len(entities):
             logger.debug("Low-pass passed all entities. Tune low_pass config if more suppression is expected.")
         low_pass_elapsed = time.perf_counter() - scan_start
