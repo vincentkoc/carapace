@@ -179,6 +179,7 @@ Large repositories experience PR and issue growth beyond human triage capacity. 
 - GitHub App permissions for PR/issue/check metadata.
 - Optional external review tool output availability.
 - Runtime infra for worker + storage + vector/signature index.
+- Default storage backend is SQLite in v1, with explicit adapter contract for PostgreSQL migration.
 
 ## 16. Release Criteria (MVP)
 - End-to-end offline run produces clusters + canonical recommendations.

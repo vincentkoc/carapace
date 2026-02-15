@@ -362,7 +362,9 @@ CanonScore =
 - `register_connector(source|sink, impl)`
 
 ## 14. Storage and Indexing
-- Relational DB (PostgreSQL preferred) for state and audit.
+- SQLite is the default relational backend for v1 (single-file local and hosted deployment baseline).
+- Storage access must go through backend interfaces so PostgreSQL can replace SQLite with minimal application-layer changes.
+- PostgreSQL is the first planned production replacement backend for scale-out and multi-writer deployments.
 - Vector index (`pgvector`, Qdrant, or FAISS-backed sidecar).
 - Signature stores for MinHash/SimHash keys.
 - Blob storage for raw event snapshots in replay mode.

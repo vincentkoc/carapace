@@ -5,6 +5,7 @@
 ## Current Capabilities
 - Repo-level configuration via `.carapace.yaml`.
 - Typed Python core built on Pydantic models.
+- SQLite-first persistence (`.carapace/carapace.db`) with adapter boundary for PostgreSQL replacement.
 - Offline scan pipeline with:
   - low-pass filtering (`pass` / `suppress` / `skip`)
   - fingerprinting + embeddings
@@ -27,6 +28,27 @@ pytest
 Run an offline scan:
 ```bash
 carapace scan --input /path/to/entities.json --repo-path /path/to/repo --output-dir ./carapace-out
+```
+
+Run directly against GitHub using `gh`:
+```bash
+carapace scan-github \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/repo \
+  --max-prs 300 \
+  --include-issues \
+  --max-issues 200 \
+  --output-dir ./carapace-out \
+  --save-input-json
+```
+
+Optional routing application:
+```bash
+# dry run (default)
+carapace scan-github --repo openclaw/openclaw --apply-routing
+
+# live GitHub writes (labels/comments)
+carapace scan-github --repo openclaw/openclaw --apply-routing --live-actions
 ```
 
 ## Config
