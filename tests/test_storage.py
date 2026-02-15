@@ -234,3 +234,66 @@ def test_ingest_quality_stats_can_filter_by_kind(tmp_path: Path) -> None:
     assert all_quality["total"] == 2
     assert pr_quality["total"] == 1
     assert issue_quality["total"] == 1
+
+
+def test_ingest_audit_summary_reports_integrity(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity.model_validate(
+                {
+                    "id": "pr:1",
+                    "repo": "acme/repo",
+                    "kind": EntityKind.PR,
+                    "number": 1,
+                    "title": "PR",
+                    "author": "alice",
+                    "state": "open",
+                    "changed_files": [],
+                }
+            ),
+            SourceEntity.model_validate(
+                {
+                    "id": "issue:2",
+                    "repo": "acme/repo",
+                    "kind": EntityKind.ISSUE,
+                    "number": 2,
+                    "title": "Issue",
+                    "author": "bob",
+                    "state": "open",
+                }
+            ),
+        ],
+    )
+
+    # Inject one malformed row to ensure integrity checks catch it.
+    with storage._connect() as conn:  # noqa: SLF001 - test-only direct DB mutation
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO ingest_entities (
+              repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "acme/repo",
+                "issue:999",
+                "pr",
+                3,
+                "open",
+                0,
+                "2026-02-15T00:00:00+00:00",
+                '{"id":"issue:999","repo":"wrong/repo","kind":"issue","number":999,"state":"open","title":"bad","author":"x"}',
+                "2026-02-15T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    summary = storage.ingest_audit_summary("acme/repo")
+    assert summary["total"] == 3
+    assert summary["by_kind"]["pr"] == 2
+    assert summary["integrity"]["kind_id_prefix_mismatch"] == 1
+    assert summary["integrity"]["kind_payload_mismatch"] == 1
+    assert summary["integrity"]["repo_payload_mismatch"] == 1
+    assert summary["integrity"]["entity_number_mismatch"] == 1

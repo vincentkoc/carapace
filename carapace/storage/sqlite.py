@@ -481,3 +481,135 @@ class SQLiteStorage:
             )
             conn.commit()
             return int(cursor.rowcount if cursor.rowcount is not None else 0)
+
+    def ingest_audit_summary(self, repo: str) -> dict:
+        with self._connect() as conn:
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM ingest_entities WHERE repo = ?",
+                    (repo,),
+                ).fetchone()[0]
+            )
+
+            by_kind_rows = conn.execute(
+                """
+                SELECT kind, COUNT(*) AS c
+                FROM ingest_entities
+                WHERE repo = ?
+                GROUP BY kind
+                """,
+                (repo,),
+            ).fetchall()
+            by_kind = {row["kind"]: int(row["c"]) for row in by_kind_rows}
+
+            by_kind_state_rows = conn.execute(
+                """
+                SELECT kind, state, COUNT(*) AS c
+                FROM ingest_entities
+                WHERE repo = ?
+                GROUP BY kind, state
+                """,
+                (repo,),
+            ).fetchall()
+            by_kind_state: dict[str, dict[str, int]] = {}
+            for row in by_kind_state_rows:
+                kind = row["kind"]
+                state = row["state"]
+                by_kind_state.setdefault(kind, {})[state] = int(row["c"])
+
+            draft_prs = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM ingest_entities
+                    WHERE repo = ? AND kind = 'pr' AND is_draft = 1
+                    """,
+                    (repo,),
+                ).fetchone()[0]
+            )
+
+            enriched_prs = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM ingest_entities
+                    WHERE repo = ? AND kind = 'pr' AND enriched_for_updated_at IS NOT NULL
+                    """,
+                    (repo,),
+                ).fetchone()[0]
+            )
+
+            enrich_level_rows = conn.execute(
+                """
+                SELECT COALESCE(enrich_level, 'none') AS level, COUNT(*) AS c
+                FROM ingest_entities
+                WHERE repo = ? AND kind = 'pr'
+                GROUP BY COALESCE(enrich_level, 'none')
+                """,
+                (repo,),
+            ).fetchall()
+            enrich_levels = {row["level"]: int(row["c"]) for row in enrich_level_rows}
+
+            integrity = {
+                "kind_id_prefix_mismatch": int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM ingest_entities
+                        WHERE repo = ?
+                          AND (
+                            (kind = 'pr' AND entity_id NOT LIKE 'pr:%')
+                            OR (kind = 'issue' AND entity_id NOT LIKE 'issue:%')
+                          )
+                        """,
+                        (repo,),
+                    ).fetchone()[0]
+                ),
+                "kind_payload_mismatch": int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM ingest_entities
+                        WHERE repo = ?
+                          AND COALESCE(json_extract(payload_json, '$.kind'), '') != kind
+                        """,
+                        (repo,),
+                    ).fetchone()[0]
+                ),
+                "repo_payload_mismatch": int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM ingest_entities
+                        WHERE repo = ?
+                          AND COALESCE(json_extract(payload_json, '$.repo'), '') != repo
+                        """,
+                        (repo,),
+                    ).fetchone()[0]
+                ),
+                "entity_number_mismatch": int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM ingest_entities
+                        WHERE repo = ?
+                          AND number IS NOT NULL
+                          AND (
+                            (kind = 'pr' AND entity_id != ('pr:' || number))
+                            OR (kind = 'issue' AND entity_id != ('issue:' || number))
+                          )
+                        """,
+                        (repo,),
+                    ).fetchone()[0]
+                ),
+            }
+
+        return {
+            "total": total,
+            "by_kind": by_kind,
+            "by_kind_state": by_kind_state,
+            "draft_prs": draft_prs,
+            "enriched_prs": enriched_prs,
+            "enrich_levels": enrich_levels,
+            "integrity": integrity,
+        }

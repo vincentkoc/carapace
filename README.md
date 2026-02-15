@@ -63,6 +63,11 @@ carapace process-stored \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --output-dir ./carapace-out/openclaw
+
+# 3) Audit ingest DB quality/integrity quickly
+carapace db-audit \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw
 ```
 
 Fast enrichment during processing:
@@ -126,4 +131,9 @@ Repo safety:
 Debug logging:
 ```bash
 carapace --log-level DEBUG ingest-github --repo openclaw/openclaw --repo-path /path/to/openclaw
+```
+
+Machine-readable DB audit:
+```bash
+carapace db-audit --repo openclaw/openclaw --repo-path /path/to/openclaw --json
 ```

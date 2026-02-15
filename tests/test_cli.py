@@ -173,10 +173,10 @@ def test_process_stored_command_reads_sqlite_and_writes_output(tmp_path: Path) -
     )
 
     (repo_path / ".carapace.yaml").write_text(
-        """
+        f"""
 storage:
   backend: sqlite
-  sqlite_path: .carapace/carapace.db
+  sqlite_path: {db_path}
   persist_runs: false
 """
     )
@@ -226,10 +226,10 @@ def test_process_stored_enrich_failure_does_not_set_watermark(tmp_path: Path, mo
     )
 
     (repo_path / ".carapace.yaml").write_text(
-        """
+        f"""
 storage:
   backend: sqlite
-  sqlite_path: .carapace/carapace.db
+  sqlite_path: {db_path}
   persist_runs: false
 """
     )
@@ -271,3 +271,107 @@ storage:
 
     watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
     assert watermarks["pr:1"]["enriched_for_updated_at"] is None
+
+
+def test_db_audit_command_outputs_summary(tmp_path: Path, capsys) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="Needs enrich",
+                body="",
+                author="alice",
+                changed_files=[],
+                ci_status=CIStatus.UNKNOWN,
+            )
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: false
+"""
+    )
+
+    exit_code = cli.main(
+        [
+            "db-audit",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--skip-repo-path-check",
+        ]
+    )
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Repo: acme/repo" in out
+    assert "Entities: total=1 prs=1 issues=0" in out
+    assert "Integrity:" in out
+
+
+def test_db_audit_command_can_emit_json(tmp_path: Path, capsys) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="issue:2",
+                repo="acme/repo",
+                kind=EntityKind.ISSUE,
+                number=2,
+                state="open",
+                title="Issue",
+                body="",
+                author="bob",
+            )
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: false
+"""
+    )
+
+    exit_code = cli.main(
+        [
+            "db-audit",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--skip-repo-path-check",
+            "--json",
+        ]
+    )
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["repo"] == "acme/repo"
+    assert payload["summary"]["total"] == 1
