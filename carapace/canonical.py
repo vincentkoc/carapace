@@ -44,16 +44,17 @@ def _lineage_overlap(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, 
     return edge.breakdown.lineage
 
 
-def _edge_metrics(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, b: str) -> tuple[float, float, float, float]:
+def _edge_metrics(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, b: str) -> tuple[float, float, float, float, float]:
     x, y = sorted((a, b))
     edge = edge_table.get((x, y))
     if edge is None:
-        return 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     return (
         edge.breakdown.file_overlap,
         edge.breakdown.hunk_overlap,
         edge.breakdown.hard_link_overlap,
         edge.breakdown.title_salient_overlap,
+        edge.breakdown.semantic_text,
     )
 
 
@@ -125,7 +126,9 @@ def rank_canonicals(
             else:
                 sim_to_canonical = _similarity(edge_table, member, canonical)
                 lineage_to_canonical = _lineage_overlap(edge_table, member, canonical)
-                file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap = _edge_metrics(edge_table, member, canonical)
+                file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
+                    edge_table, member, canonical
+                )
                 member_kind = member.split(":", maxsplit=1)[0] if ":" in member else "unknown"
                 canonical_kind = canonical.split(":", maxsplit=1)[0] if ":" in canonical else "unknown"
                 same_kind = (
@@ -136,11 +139,24 @@ def rank_canonicals(
                 meets_similarity = sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5
                 has_duplicate_evidence = (
                     lineage_to_canonical >= 0.5
-                    or hard_link_overlap >= cfg.duplicate_hard_link_overlap_min
+                    or (
+                        hard_link_overlap >= cfg.duplicate_hard_link_overlap_min
+                        and (
+                            file_overlap >= cfg.duplicate_hard_link_file_overlap_min
+                            or hunk_overlap >= cfg.duplicate_hard_link_hunk_overlap_min
+                            or title_salient_overlap >= cfg.duplicate_hard_link_title_overlap_min
+                        )
+                    )
                     or hunk_overlap >= cfg.duplicate_hunk_overlap_min
                     or (
                         file_overlap >= cfg.duplicate_file_overlap_min
-                        and title_salient_overlap >= cfg.duplicate_title_salient_overlap_min
+                        and title_salient_overlap >= cfg.duplicate_file_title_overlap_min
+                        and semantic_text >= cfg.duplicate_semantic_text_min
+                    )
+                    or (
+                        title_salient_overlap >= cfg.duplicate_title_salient_overlap_min
+                        and semantic_text >= cfg.duplicate_semantic_text_min
+                        and hunk_overlap >= cfg.duplicate_hunk_overlap_min
                     )
                 )
                 if same_kind and meets_similarity and has_duplicate_evidence:

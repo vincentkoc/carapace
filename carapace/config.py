@@ -99,7 +99,12 @@ class CanonicalConfig(BaseModel):
     duplicate_file_overlap_min: float = 0.80
     duplicate_hunk_overlap_min: float = 0.80
     duplicate_title_salient_overlap_min: float = 0.20
+    duplicate_semantic_text_min: float = 0.85
+    duplicate_file_title_overlap_min: float = 0.80
     duplicate_hard_link_overlap_min: float = 0.50
+    duplicate_hard_link_file_overlap_min: float = 0.90
+    duplicate_hard_link_hunk_overlap_min: float = 0.20
+    duplicate_hard_link_title_overlap_min: float = 0.80
     tie_margin: float = 0.10
 
 
