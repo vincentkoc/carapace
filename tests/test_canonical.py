@@ -190,3 +190,61 @@ def test_hard_link_only_needs_supporting_overlap_for_duplicate() -> None:
     d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
     non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
     assert non_canonical.state == DecisionState.RELATED
+
+
+def test_title_mismatch_veto_blocks_duplicate_without_lineage() -> None:
+    cfg = CanonicalConfig(duplicate_threshold=0.22, tie_margin=0.0)
+    clusters = [Cluster(id="cluster-1", members=["a", "b"])]
+    fingerprints = {
+        "a": _fp("a", CIStatus.PASS, reviewer=0.6, approvals=1, files=["src/shared.py"]),
+        "b": _fp("b", CIStatus.PASS, reviewer=0.5, approvals=1, files=["src/shared.py"]),
+    }
+    low_pass = {
+        "a": LowPassDecision(entity_id="a", state="pass", priority_weight=1.0),
+        "b": LowPassDecision(entity_id="b", state="pass", priority_weight=1.0),
+    }
+    edges = [
+        _edge(
+            "a",
+            "b",
+            score=0.45,
+            file_overlap=1.0,
+            hunk_overlap=1.0,
+            hard_link_overlap=0.5,
+            title_salient_overlap=0.0,
+            semantic_text=0.68,
+        )
+    ]
+
+    d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
+    non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
+    assert non_canonical.state == DecisionState.RELATED
+
+
+def test_title_mismatch_veto_blocks_tie_break_escalation() -> None:
+    cfg = CanonicalConfig(duplicate_threshold=0.22, tie_margin=10.0)
+    clusters = [Cluster(id="cluster-1", members=["a", "b"])]
+    fingerprints = {
+        "a": _fp("a", CIStatus.PASS, reviewer=0.5, approvals=1, files=["src/shared.py"]),
+        "b": _fp("b", CIStatus.PASS, reviewer=0.49, approvals=1, files=["src/shared.py"]),
+    }
+    low_pass = {
+        "a": LowPassDecision(entity_id="a", state="pass", priority_weight=1.0),
+        "b": LowPassDecision(entity_id="b", state="pass", priority_weight=1.0),
+    }
+    edges = [
+        _edge(
+            "a",
+            "b",
+            score=0.45,
+            file_overlap=1.0,
+            hunk_overlap=1.0,
+            hard_link_overlap=0.5,
+            title_salient_overlap=0.0,
+            semantic_text=0.68,
+        )
+    ]
+
+    d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
+    non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
+    assert non_canonical.state == DecisionState.RELATED

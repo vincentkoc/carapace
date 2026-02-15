@@ -58,6 +58,22 @@ def _edge_metrics(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, b: 
     )
 
 
+def _title_mismatch_veto(
+    *,
+    lineage_overlap: float,
+    title_salient_overlap: float,
+    semantic_text: float,
+    hard_link_overlap: float,
+    cfg: CanonicalConfig,
+) -> bool:
+    return (
+        lineage_overlap < 0.5
+        and title_salient_overlap <= cfg.duplicate_title_mismatch_overlap_max
+        and semantic_text <= cfg.duplicate_title_mismatch_semantic_text_max
+        and hard_link_overlap < cfg.duplicate_title_mismatch_hard_link_override_min
+    )
+
+
 def _ci_score(ci: CIStatus) -> float:
     if ci == CIStatus.PASS:
         return 1.0
@@ -159,6 +175,15 @@ def rank_canonicals(
                         and hunk_overlap >= cfg.duplicate_hunk_overlap_min
                     )
                 )
+                title_mismatch_veto = _title_mismatch_veto(
+                    lineage_overlap=lineage_to_canonical,
+                    title_salient_overlap=title_salient_overlap,
+                    semantic_text=semantic_text,
+                    hard_link_overlap=hard_link_overlap,
+                    cfg=cfg,
+                )
+                if title_mismatch_veto:
+                    has_duplicate_evidence = False
                 if same_kind and meets_similarity and has_duplicate_evidence:
                     state = DecisionState.DUPLICATE
                     reason = f"Similarity {sim_to_canonical:.2f} / lineage {lineage_to_canonical:.2f} meets duplicate criteria"
@@ -183,6 +208,18 @@ def rank_canonicals(
             for idx, decision in enumerate(member_decisions):
                 # Only escalate to tie-break for non-duplicate runner-up.
                 if decision.entity_id == ranked[1][0] and decision.state == DecisionState.RELATED:
+                    _, _, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
+                        edge_table, decision.entity_id, canonical
+                    )
+                    lineage_overlap = _lineage_overlap(edge_table, decision.entity_id, canonical)
+                    if _title_mismatch_veto(
+                        lineage_overlap=lineage_overlap,
+                        title_salient_overlap=title_salient_overlap,
+                        semantic_text=semantic_text,
+                        hard_link_overlap=hard_link_overlap,
+                        cfg=cfg,
+                    ):
+                        continue
                     member_decisions[idx] = MemberDecision(
                         entity_id=decision.entity_id,
                         state=DecisionState.TIE_BREAK,
