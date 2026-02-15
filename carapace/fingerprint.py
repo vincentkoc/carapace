@@ -33,7 +33,7 @@ def _hunk_signature(file_path: str, context: str, added: Iterable[str], removed:
             " ".join(removed_tokens[:64]),
         ]
     )
-    return hashlib.sha1(material.encode("utf-8")).hexdigest()
+    return hashlib.blake2b(material.encode("utf-8"), digest_size=20).hexdigest()
 
 
 def build_fingerprint(entity: SourceEntity, embedding: list[float]) -> Fingerprint:

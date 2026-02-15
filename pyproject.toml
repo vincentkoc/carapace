@@ -55,3 +55,10 @@ disable_error_code = ["import-untyped"]
 exclude = [
   "tests/",
 ]
+
+[[tool.mypy.overrides]]
+module = [
+  "yaml",
+  "yaml.*",
+]
+ignore_missing_imports = true

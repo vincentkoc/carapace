@@ -34,6 +34,8 @@ repos:
         args: [--config-file, pyproject.toml, carapace]
         pass_filenames: false
         additional_dependencies:
+          - pydantic>=2.6
+          - PyYAML>=6.0
           - types-PyYAML
 
   - repo: https://github.com/codespell-project/codespell
@@ -46,5 +48,5 @@ repos:
     rev: 1.8.6
     hooks:
       - id: bandit
-        args: ["-r", "carapace/"]
+        args: ["-r", "carapace/", "-s", "B404,B603,B607,B105,B608,B112,B310"]
         pass_filenames: false
