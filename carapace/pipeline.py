@@ -314,6 +314,14 @@ class CarapaceEngine:
             len(clusters),
             total_elapsed,
         )
+        logger.info(
+            "Scan profile: cache(hits=%s misses=%s) similarity(candidates=%s pairs=%s edges=%s)",
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            sim_stats.candidate_links_generated,
+            sim_stats.unique_pairs_scored,
+            sim_stats.edges_emitted,
+        )
         return report
 
     def _build_routing(
