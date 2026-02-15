@@ -276,6 +276,7 @@ class GithubGhSourceConnector(SourceConnector):
             enrich_reviews=False,
             enrich_ci=False,
             enrich_comments=False,
+            file_pages_limit=1,
         )
 
     def get_diff_or_change_set(self, entity_id: str) -> dict:
@@ -307,6 +308,7 @@ class GithubGhSourceConnector(SourceConnector):
         enrich_reviews: bool = True,
         enrich_ci: bool = True,
         enrich_comments: bool = True,
+        file_pages_limit: int | None = None,
     ) -> SourceEntity:
         number = pull.number
 
@@ -319,7 +321,10 @@ class GithubGhSourceConnector(SourceConnector):
         ci_status = CIStatus.UNKNOWN
 
         if enrich_files:
-            files_payload = self.client.get_paginated(f"pulls/{number}/files")
+            if file_pages_limit is not None and file_pages_limit <= 1:
+                files_payload = self.client.get_page(f"pulls/{number}/files", page=1, per_page=100)
+            else:
+                files_payload = self.client.get_paginated(f"pulls/{number}/files")
             files = [GithubFile.model_validate(item) for item in files_payload]
             changed_files = [item.filename for item in files]
             diff_hunks = _parse_diff_hunks(files)
