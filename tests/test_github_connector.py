@@ -37,6 +37,12 @@ class FakeGhClient:
         if endpoint == "pulls/1/reviews":
             return [{"state": "APPROVED"}]
 
+        if endpoint == "pulls/1/commits":
+            return [
+                {"sha": "deadbeef1", "commit": {"message": "feat: cache key normalization"}},
+                {"sha": "deadbeef2", "commit": {"message": "test: add coverage"}},
+            ]
+
         if endpoint == "issues/1/comments":
             return [
                 {
@@ -95,6 +101,8 @@ def test_github_connector_normalizes_pr() -> None:
     assert pr.approvals == 1
     assert pr.changed_files == ["src/cache.py"]
     assert len(pr.diff_hunks) == 1
+    assert pr.commits == ["deadbeef1", "deadbeef2"]
+    assert len(pr.patch_ids) == 2
     assert pr.external_reviews[0].provider == "coderabbit"
     assert pr.external_reviews[0].overall_score == 0.82
 
@@ -127,6 +135,8 @@ def test_enrich_entity_minimal_uses_files_fast_path() -> None:
             self.calls.append(("get_page", endpoint))
             if endpoint == "pulls/1/files":
                 return [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-old\n+new"}]
+            if endpoint == "pulls/1/commits":
+                return [{"sha": "abc123", "commit": {"message": "fix: sample"}}]
             return []
 
         def _api_json(self, endpoint: str, method: str = "GET", body=None):
@@ -153,7 +163,10 @@ def test_enrich_entity_minimal_uses_files_fast_path() -> None:
     enriched = connector.enrich_entity(pr_entity, mode="minimal")
     assert enriched.changed_files == ["src/a.py"]
     assert len(enriched.diff_hunks) == 1
+    assert enriched.commits == ["abc123"]
+    assert len(enriched.patch_ids) == 1
     assert ("get_page", "pulls/1/files") in fast_client.calls
+    assert ("get_page", "pulls/1/commits") in fast_client.calls
     assert ("_api_json", "pulls/1") not in fast_client.calls
 
 

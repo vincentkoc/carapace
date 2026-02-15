@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -88,6 +89,13 @@ class GithubComment(BaseModel):
     user: GithubUser | None = None
 
 
+class GithubPullCommit(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    sha: str
+    commit: dict[str, Any] = Field(default_factory=dict)
+
+
 class GithubGhClient:
     def __init__(self, repo: str, gh_bin: str = "gh") -> None:
         self.repo = repo
@@ -170,6 +178,7 @@ class GithubGhSourceConnector(SourceConnector):
                     enrich_reviews=enrich_pr_details,
                     enrich_ci=enrich_pr_details,
                     enrich_comments=enrich_issue_comments,
+                    enrich_lineage=enrich_pr_details,
                 )
             )
 
@@ -211,6 +220,7 @@ class GithubGhSourceConnector(SourceConnector):
                     enrich_reviews=enrich_details,
                     enrich_ci=enrich_details,
                     enrich_comments=enrich_comments,
+                    enrich_lineage=enrich_details,
                 )
             )
         return entities
@@ -236,6 +246,7 @@ class GithubGhSourceConnector(SourceConnector):
                 enrich_reviews=True,
                 enrich_ci=True,
                 enrich_comments=False,
+                enrich_lineage=True,
             )
         payload = self.client._api_json(f"issues/{number}")
         issue = GithubIssue.model_validate(payload)
@@ -255,7 +266,16 @@ class GithubGhSourceConnector(SourceConnector):
             files = [GithubFile.model_validate(item) for item in files_payload]
             changed_files = [item.filename for item in files]
             diff_hunks = _parse_diff_hunks(files)
-            return entity.model_copy(update={"changed_files": changed_files, "diff_hunks": diff_hunks})
+            commits_payload = self.client.get_page(f"pulls/{entity.number}/commits", page=1, per_page=100)
+            commits, patch_ids = _extract_lineage(commits_payload)
+            return entity.model_copy(
+                update={
+                    "changed_files": changed_files,
+                    "diff_hunks": diff_hunks,
+                    "commits": commits,
+                    "patch_ids": patch_ids,
+                }
+            )
 
         payload = self.client._api_json(f"pulls/{entity.number}")
         pull = GithubPull.model_validate(payload)
@@ -265,6 +285,7 @@ class GithubGhSourceConnector(SourceConnector):
             enrich_reviews=True,
             enrich_ci=True,
             enrich_comments=include_comments,
+            enrich_lineage=True,
         )
 
     def get_diff_or_change_set(self, entity_id: str) -> dict:
@@ -296,12 +317,16 @@ class GithubGhSourceConnector(SourceConnector):
         enrich_reviews: bool = True,
         enrich_ci: bool = True,
         enrich_comments: bool = True,
+        enrich_lineage: bool = True,
         file_pages_limit: int | None = None,
+        commits_pages_limit: int | None = None,
     ) -> SourceEntity:
         number = pull.number
 
         changed_files: list[str] = []
         diff_hunks: list[DiffHunk] = []
+        commits: list[str] = []
+        patch_ids: list[str] = []
         approvals = 0
         reviews_payload: list[dict[str, Any]] = []
         comments: list[GithubComment] = []
@@ -326,6 +351,13 @@ class GithubGhSourceConnector(SourceConnector):
             if head_sha:
                 status_payload = self.client._api_json(f"commits/{head_sha}/status") or {}
                 ci_status = _normalize_ci_status(status_payload.get("state"))
+
+        if enrich_lineage:
+            if commits_pages_limit is not None and commits_pages_limit <= 1:
+                commits_payload = self.client.get_page(f"pulls/{number}/commits", page=1, per_page=100)
+            else:
+                commits_payload = self.client.get_paginated(f"pulls/{number}/commits")
+            commits, patch_ids = _extract_lineage(commits_payload)
 
         if enrich_comments:
             comments_payload = self.client.get_paginated(f"issues/{number}/comments")
@@ -354,8 +386,8 @@ class GithubGhSourceConnector(SourceConnector):
             linked_issues=linked_issues,
             changed_files=changed_files,
             diff_hunks=diff_hunks,
-            commits=[],
-            patch_ids=[],
+            commits=commits,
+            patch_ids=patch_ids,
             additions=pull.additions,
             deletions=pull.deletions,
             ci_status=ci_status,
@@ -489,6 +521,37 @@ def _parse_diff_hunks(files: list[GithubFile]) -> list[DiffHunk]:
         flush()
 
     return hunks
+
+
+def _stable_patch_like_id(text: str) -> str:
+    material = text.encode("utf-8")
+    return hashlib.blake2b(material, digest_size=20).hexdigest()
+
+
+def _extract_lineage(commits_payload: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    commits: list[str] = []
+    patch_ids: list[str] = []
+    seen_commits: set[str] = set()
+    seen_patch_ids: set[str] = set()
+
+    for item in commits_payload:
+        commit_obj = GithubPullCommit.model_validate(item)
+        sha = commit_obj.sha
+        if sha and sha not in seen_commits:
+            commits.append(sha)
+            seen_commits.add(sha)
+
+        message = ((commit_obj.commit.get("message") or "").strip().splitlines() or [""])[0]
+        token = message if message else sha
+        if not token:
+            continue
+        patch_like_id = _stable_patch_like_id(token)
+        if patch_like_id in seen_patch_ids:
+            continue
+        patch_ids.append(patch_like_id)
+        seen_patch_ids.add(patch_like_id)
+
+    return commits, patch_ids
 
 
 def _extract_external_review_signals(comments: list[GithubComment]) -> list[ExternalReviewSignal]:
