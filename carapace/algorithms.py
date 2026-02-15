@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import hashlib
 from collections import deque
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def _stable_hash64(text: str, seed: int = 0) -> int:
-    material = f"{seed}:{text}".encode("utf-8")
+    material = f"{seed}:{text}".encode()
     digest = hashlib.blake2b(material, digest_size=8).digest()
     return int.from_bytes(digest, byteorder="big", signed=False)
 

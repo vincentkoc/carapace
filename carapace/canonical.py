@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+
 from carapace.config import CanonicalConfig
 from carapace.models import (
-    CIStatus,
     CanonicalDecision,
+    CIStatus,
     Cluster,
     DecisionState,
     Fingerprint,
@@ -19,7 +20,8 @@ from carapace.models import (
 def _edge_lookup(edges: list[SimilarityEdge]) -> dict[tuple[str, str], SimilarityEdge]:
     table: dict[tuple[str, str], SimilarityEdge] = {}
     for edge in edges:
-        key = tuple(sorted((edge.entity_a, edge.entity_b)))
+        a, b = sorted((edge.entity_a, edge.entity_b))
+        key = (a, b)
         table[key] = edge
     return table
 
@@ -27,14 +29,16 @@ def _edge_lookup(edges: list[SimilarityEdge]) -> dict[tuple[str, str], Similarit
 def _similarity(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, b: str) -> float:
     if a == b:
         return 1.0
-    edge = edge_table.get(tuple(sorted((a, b))))
+    x, y = sorted((a, b))
+    edge = edge_table.get((x, y))
     if edge is None:
         return 0.0
     return edge.score
 
 
 def _lineage_overlap(edge_table: dict[tuple[str, str], SimilarityEdge], a: str, b: str) -> float:
-    edge = edge_table.get(tuple(sorted((a, b))))
+    x, y = sorted((a, b))
+    edge = edge_table.get((x, y))
     if edge is None:
         return 0.0
     return edge.breakdown.lineage
@@ -81,7 +85,8 @@ def rank_canonicals(
             approvals_norm = min(1.0, fp.approvals / 3.0)
             churn = fp.additions + fp.deletions
             size_penalty = min(1.0, math.log1p(churn) / 8.0)
-            priority = low_pass.get(member).priority_weight if member in low_pass else 1.0
+            lp = low_pass.get(member)
+            priority = lp.priority_weight if lp else 1.0
 
             score = (
                 cfg.weight_coverage * coverage
@@ -108,10 +113,7 @@ def rank_canonicals(
                 lineage_to_canonical = _lineage_overlap(edge_table, member, canonical)
                 if sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5:
                     state = DecisionState.DUPLICATE
-                    reason = (
-                        f"Similarity {sim_to_canonical:.2f} / lineage {lineage_to_canonical:.2f} "
-                        "meets duplicate criteria"
-                    )
+                    reason = f"Similarity {sim_to_canonical:.2f} / lineage {lineage_to_canonical:.2f} meets duplicate criteria"
                     duplicate_of = canonical
                 else:
                     state = DecisionState.RELATED

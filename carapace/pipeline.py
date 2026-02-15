@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 from carapace.canonical import rank_canonicals
+from carapace.clustering import build_clusters
 from carapace.config import CarapaceConfig, load_effective_config
 from carapace.embeddings.base import EmbeddingProvider
 from carapace.embeddings.local_hash import LocalHashEmbeddingProvider
@@ -19,11 +20,11 @@ from carapace.models import (
     DecisionState,
     EngineReport,
     FilterState,
+    Fingerprint,
     LowPassDecision,
     RoutingDecision,
     SourceEntity,
 )
-from carapace.clustering import build_clusters
 from carapace.similarity import compute_similarity_edges_with_stats
 from carapace.storage.base import StorageBackend
 
@@ -57,7 +58,7 @@ class CarapaceEngine:
         self.embedding_provider = embedding_provider or _provider_from_config(config)
         self.hooks = hooks or HookManager()
         self.storage = storage or self._storage_from_config(config)
-        self.last_fingerprints = {}
+        self.last_fingerprints: dict[str, Fingerprint] = {}
 
     @classmethod
     def from_repo(
@@ -69,7 +70,7 @@ class CarapaceEngine:
         embedding_provider: EmbeddingProvider | None = None,
         hooks: HookManager | None = None,
         storage: StorageBackend | None = None,
-    ) -> "CarapaceEngine":
+    ) -> CarapaceEngine:
         config = load_effective_config(
             repo_path=repo_path,
             org_defaults=org_defaults,
@@ -145,7 +146,7 @@ class CarapaceEngine:
 
             if self.storage and hasattr(self.storage, "load_fingerprint_cache"):
                 for repo, repo_entities in by_repo.items():
-                    cached = self.storage.load_fingerprint_cache(  # type: ignore[attr-defined]
+                    cached = self.storage.load_fingerprint_cache(
                         repo,
                         repo_entities,
                         model_id=model_id,
@@ -170,7 +171,7 @@ class CarapaceEngine:
                 if self.storage and hasattr(self.storage, "upsert_fingerprint_cache"):
                     computed_ids = {item.id for item in to_compute}
                     for repo, repo_entities in by_repo.items():
-                        self.storage.upsert_fingerprint_cache(  # type: ignore[attr-defined]
+                        self.storage.upsert_fingerprint_cache(
                             repo,
                             [entity for entity in repo_entities if entity.id in computed_ids],
                             fingerprints,

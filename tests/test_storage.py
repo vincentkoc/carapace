@@ -1,5 +1,5 @@
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
 
 from carapace.config import CarapaceConfig, StorageConfig
 from carapace.models import EntityKind, Fingerprint, SourceEntity

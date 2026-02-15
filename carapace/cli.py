@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from pathlib import Path
+import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
-import time
+from pathlib import Path
 
 import yaml
 
@@ -353,9 +353,7 @@ def _enrich_entities_if_needed(
         if args.enrich_mode == "minimal":
             needs = (not same_version) or (len(entity.changed_files) == 0)
         else:
-            needs = (not same_version) or (level != "full") or (len(entity.changed_files) == 0) or (
-                entity.ci_status.value == "unknown"
-            )
+            needs = (not same_version) or (level != "full") or (len(entity.changed_files) == 0) or (entity.ci_status.value == "unknown")
         if needs:
             targets.append((idx, entity))
 
@@ -438,7 +436,7 @@ def _enrich_entities_if_needed(
             state_updates.clear()
 
     with ThreadPoolExecutor(max_workers=max(1, args.enrich_workers)) as pool:
-        pending = {pool.submit(_enrich_one, target): target for target in targets}
+        pending = {pool.submit(_enrich_one, target) for target in targets}
         while pending:
             done, pending = wait(pending, timeout=heartbeat_seconds, return_when=FIRST_COMPLETED)
             if not done:
@@ -476,8 +474,7 @@ def _run_process_stored(args: argparse.Namespace) -> int:
     state = storage.get_ingest_state(args.repo)
     if not state["completed"]:
         logger.warning(
-            "Ingest state for %s is incomplete (phase=%s, pr_next_page=%s, issue_next_page=%s). "
-            "Processing partial snapshot.",
+            "Ingest state for %s is incomplete (phase=%s, pr_next_page=%s, issue_next_page=%s). Processing partial snapshot.",
             args.repo,
             state["phase"],
             state["pr_next_page"],
@@ -534,12 +531,7 @@ def _run_process_stored(args: argparse.Namespace) -> int:
         logger.info("Enrichment finished for %s PRs before scan", enriched_count)
 
     # Re-apply state filters after enrichment may have changed PR state (e.g. closed during processing).
-    entities = [
-        entity
-        for entity in entities
-        if (config.ingest.include_closed or entity.state == "open")
-        and (config.ingest.include_drafts or not entity.is_draft)
-    ]
+    entities = [entity for entity in entities if (config.ingest.include_closed or entity.state == "open") and (config.ingest.include_drafts or not entity.is_draft)]
     logger.info("Entities after post-enrichment state filtering: %s", len(entities))
 
     engine = _build_engine(config, storage=storage)
@@ -598,9 +590,7 @@ def _run_scan_github(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.save_input_json:
-        (out_dir / "entities.json").write_text(
-            json.dumps([entity.model_dump(mode="json") for entity in entities], indent=2)
-        )
+        (out_dir / "entities.json").write_text(json.dumps([entity.model_dump(mode="json") for entity in entities], indent=2))
 
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
@@ -641,11 +631,7 @@ def _run_db_audit(args: argparse.Namespace) -> int:
 
     print(f"Repo: {args.repo}")
     print(f"DB: {config.storage.sqlite_path}")
-    print(
-        "Ingest state: completed={completed} phase={phase} pr_next_page={pr_next_page} issue_next_page={issue_next_page}".format(
-            **state
-        )
-    )
+    print("Ingest state: completed={completed} phase={phase} pr_next_page={pr_next_page} issue_next_page={issue_next_page}".format(**state))
     print(
         "Entities: total={total} prs={prs} issues={issues}".format(
             total=summary["total"],
@@ -667,21 +653,9 @@ def _run_db_audit(args: argparse.Namespace) -> int:
             closed=summary["by_kind_state"].get("issue", {}).get("closed", 0),
         )
     )
-    print(
-        "Quality(all): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(
-            **quality
-        )
-    )
-    print(
-        "Quality(pr): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(
-            **pr_quality
-        )
-    )
-    print(
-        "Quality(issue): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(
-            **issue_quality
-        )
-    )
+    print("Quality(all): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(**quality))
+    print("Quality(pr): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(**pr_quality))
+    print("Quality(issue): missing_changed_files={missing_changed_files} missing_diff_hunks={missing_diff_hunks} ci_unknown={ci_unknown} enriched_rows={enriched_rows}".format(**issue_quality))
     print(
         "Integrity: kind_id_prefix_mismatch={kind_id_prefix_mismatch} kind_payload_mismatch={kind_payload_mismatch} repo_payload_mismatch={repo_payload_mismatch} entity_number_mismatch={entity_number_mismatch}".format(
             **summary["integrity"]
@@ -692,9 +666,7 @@ def _run_db_audit(args: argparse.Namespace) -> int:
     print(
         "Fingerprint cache rows: total={total} by_model={models}".format(
             total=summary["fingerprint_cache_rows"],
-            models=", ".join(
-                f"{model}={count}" for model, count in sorted(summary["fingerprint_cache_by_model"].items())
-            ),
+            models=", ".join(f"{model}={count}" for model, count in sorted(summary["fingerprint_cache_by_model"].items())),
         )
     )
     return 0

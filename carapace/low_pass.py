@@ -82,9 +82,7 @@ def apply_low_pass(entity: SourceEntity, cfg: LowPassConfig) -> LowPassDecision:
             priority_weight = max(priority_weight, weight)
             reasons.append(f"BOOST_{label.upper().replace('-', '_')}")
 
-    if reasons and any(
-        code in {"SOFT_SUPPRESS_LABEL", "LOW_SIGNAL_DOCS_ONLY", "BOT_SUPPRESSED"} for code in reasons
-    ):
+    if reasons and any(code in {"SOFT_SUPPRESS_LABEL", "LOW_SIGNAL_DOCS_ONLY", "BOT_SUPPRESSED"} for code in reasons):
         state = FilterState.SUPPRESS
     else:
         state = FilterState.PASS

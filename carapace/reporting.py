@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from carapace.models import DecisionState, EngineReport
+from carapace.models import EngineReport
 
 
 def render_markdown_report(report: EngineReport) -> str:

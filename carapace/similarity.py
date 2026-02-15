@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import math
 import logging
+import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 
 from carapace.algorithms import (
-    hamming_distance,
     minhash_lsh_bands,
     minhash_signature,
     minhash_similarity,
@@ -238,15 +237,7 @@ def score_pair(
     size_ratio = max(churn_a, churn_b) / min(churn_a, churn_b)
     size_penalty = min(1.0, max(0.0, math.log10(size_ratio)))
 
-    total = (
-        cfg.weight_lineage * lineage
-        + cfg.weight_structure * structure
-        + cfg.weight_semantic * semantic
-        + cfg.weight_minhash * minhash
-        + cfg.weight_simhash * simhash
-        + cfg.weight_winnow * winnow
-        - cfg.size_penalty_weight * size_penalty
-    )
+    total = cfg.weight_lineage * lineage + cfg.weight_structure * structure + cfg.weight_semantic * semantic + cfg.weight_minhash * minhash + cfg.weight_simhash * simhash + cfg.weight_winnow * winnow - cfg.size_penalty_weight * size_penalty
 
     breakdown = SimilarityBreakdown(
         lineage=lineage,
@@ -262,19 +253,10 @@ def score_pair(
 
 
 def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConfig) -> EdgeTier | None:
-    if (
-        breakdown.lineage >= cfg.lineage_strong_overlap
-        or score >= cfg.strong_score
-        or breakdown.minhash >= cfg.strong_minhash_min
-        or breakdown.winnow >= cfg.strong_winnow_min
-    ):
+    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score or breakdown.minhash >= cfg.strong_minhash_min or breakdown.winnow >= cfg.strong_winnow_min:
         return EdgeTier.STRONG
     if score >= cfg.min_score and (
-        breakdown.structure >= cfg.weak_structure_min
-        or breakdown.semantic >= cfg.weak_semantic_min
-        or breakdown.minhash >= cfg.weak_minhash_min
-        or breakdown.simhash >= cfg.weak_simhash_min
-        or breakdown.winnow >= cfg.weak_winnow_min
+        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min or breakdown.minhash >= cfg.weak_minhash_min or breakdown.simhash >= cfg.weak_simhash_min or breakdown.winnow >= cfg.weak_winnow_min
     ):
         return EdgeTier.WEAK
     return None

@@ -164,7 +164,10 @@ class SQLiteStorage:
                     report.model_dump_json(),
                 ),
             )
-            run_id = int(cursor.lastrowid)
+            row_id = cursor.lastrowid
+            if row_id is None:
+                raise RuntimeError("Failed to persist run row")
+            run_id = int(row_id)
 
             for entity in entities:
                 conn.execute(
@@ -346,11 +349,7 @@ class SQLiteStorage:
         if not include_drafts:
             predicates.append("is_draft = 0")
 
-        sql = (
-            "SELECT payload_json FROM ingest_entities WHERE "
-            + " AND ".join(predicates)
-            + " ORDER BY kind, number"
-        )
+        sql = "SELECT payload_json FROM ingest_entities WHERE " + " AND ".join(predicates) + " ORDER BY kind, number"
 
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
@@ -417,8 +416,7 @@ class SQLiteStorage:
             predicates.append("kind = ?")
             params.append(kind)
 
-        sql = (
-            """
+        sql = """
                 SELECT
                   COUNT(*) AS total,
                   SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.changed_files')), 0) = 0 THEN 1 ELSE 0 END) AS missing_changed_files,
@@ -426,9 +424,7 @@ class SQLiteStorage:
                   SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.ci_status'), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS ci_unknown,
                   SUM(CASE WHEN enriched_for_updated_at IS NOT NULL THEN 1 ELSE 0 END) AS enriched_rows
                 FROM ingest_entities
-                WHERE """
-            + " AND ".join(predicates)
-        )
+                WHERE """ + " AND ".join(predicates)
         with self._connect() as conn:
             row = conn.execute(sql, tuple(params)).fetchone()
         if row is None:
@@ -454,13 +450,10 @@ class SQLiteStorage:
             predicates.append("kind = ?")
             params.append(kind)
 
-        sql = (
-            """
+        sql = """
                 SELECT entity_id, enriched_for_updated_at, enrich_level
                 FROM ingest_entities
-                WHERE """
-            + " AND ".join(predicates)
-        )
+                WHERE """ + " AND ".join(predicates)
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return {

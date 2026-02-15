@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 from carapace.models import Fingerprint, SourceEntity
 
@@ -45,9 +45,7 @@ def build_fingerprint(entity: SourceEntity, embedding: list[float]) -> Fingerpri
     if entity.external_reviews:
         reviewer_score = sum(sig.overall_score for sig in entity.external_reviews) / len(entity.external_reviews)
 
-    hunk_signatures = [
-        _hunk_signature(h.file_path, h.context, h.added_lines, h.removed_lines) for h in entity.diff_hunks
-    ]
+    hunk_signatures = [_hunk_signature(h.file_path, h.context, h.added_lines, h.removed_lines) for h in entity.diff_hunks]
 
     return Fingerprint(
         entity_id=entity.id,

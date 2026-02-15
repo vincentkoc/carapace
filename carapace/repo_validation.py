@@ -28,17 +28,11 @@ def validate_repo_path_matches(repo_path: str | Path, expected_repo: str) -> Non
         check=False,
     )
     if proc.returncode != 0:
-        raise ValueError(
-            f"Could not resolve git origin for repo_path={path}. "
-            "Use a local clone of the target repository or pass --skip-repo-path-check."
-        )
+        raise ValueError(f"Could not resolve git origin for repo_path={path}. Use a local clone of the target repository or pass --skip-repo-path-check.")
 
     detected = _extract_repo_slug(proc.stdout)
     if not detected:
         raise ValueError(f"Unable to parse GitHub repo slug from origin URL: {proc.stdout.strip()}")
 
     if detected.lower() != expected_repo.lower():
-        raise ValueError(
-            f"Repo mismatch: repo argument is '{expected_repo}' but repo_path origin is '{detected}'. "
-            "Fix repo_path or pass --skip-repo-path-check."
-        )
+        raise ValueError(f"Repo mismatch: repo argument is '{expected_repo}' but repo_path origin is '{detected}'. Fix repo_path or pass --skip-repo-path-check.")

@@ -6,8 +6,9 @@ import json
 import logging
 import re
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
