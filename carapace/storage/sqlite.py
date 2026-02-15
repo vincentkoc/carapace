@@ -88,6 +88,9 @@ class SQLiteStorage:
                   updated_at TEXT NOT NULL,
                   payload_json TEXT NOT NULL,
                   fetched_at TEXT NOT NULL,
+                  enriched_for_updated_at TEXT,
+                  last_enriched_at TEXT,
+                  enrich_level TEXT,
                   PRIMARY KEY (repo, entity_id)
                 );
 
@@ -104,6 +107,23 @@ class SQLiteStorage:
                 CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_kind_state_num ON ingest_entities(repo, kind, state, number);
                 """
             )
+            self._ensure_ingest_columns(conn)
+
+    @staticmethod
+    def _ensure_ingest_columns(conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(ingest_entities)").fetchall()
+        columns = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+
+        to_add = []
+        if "enriched_for_updated_at" not in columns:
+            to_add.append("ALTER TABLE ingest_entities ADD COLUMN enriched_for_updated_at TEXT")
+        if "last_enriched_at" not in columns:
+            to_add.append("ALTER TABLE ingest_entities ADD COLUMN last_enriched_at TEXT")
+        if "enrich_level" not in columns:
+            to_add.append("ALTER TABLE ingest_entities ADD COLUMN enrich_level TEXT")
+
+        for statement in to_add:
+            conn.execute(statement)
 
     def save_run(
         self,
@@ -200,7 +220,14 @@ class SQLiteStorage:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def upsert_ingest_entities(self, repo: str, entities: list[SourceEntity]) -> int:
+    def upsert_ingest_entities(
+        self,
+        repo: str,
+        entities: list[SourceEntity],
+        *,
+        source: str = "ingest",
+        enrich_level: str | None = None,
+    ) -> int:
         if not entities:
             return 0
         now = datetime.now(UTC).isoformat()
@@ -215,26 +242,79 @@ class SQLiteStorage:
                 entity.updated_at.isoformat(),
                 entity.model_dump_json(),
                 now,
+                entity.updated_at.isoformat() if source == "enrichment" else None,
+                now if source == "enrichment" else None,
+                enrich_level if source == "enrichment" else None,
             )
             for entity in entities
         ]
         with self._connect() as conn:
-            conn.executemany(
-                """
-                INSERT INTO ingest_entities (
-                  repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(repo, entity_id) DO UPDATE SET
-                  kind=excluded.kind,
-                  number=excluded.number,
-                  state=excluded.state,
-                  is_draft=excluded.is_draft,
-                  updated_at=excluded.updated_at,
-                  payload_json=excluded.payload_json,
-                  fetched_at=excluded.fetched_at
-                """,
-                rows,
-            )
+            if source == "enrichment":
+                conn.executemany(
+                    """
+                    INSERT INTO ingest_entities (
+                      repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at,
+                      enriched_for_updated_at, last_enriched_at, enrich_level
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(repo, entity_id) DO UPDATE SET
+                      kind=excluded.kind,
+                      number=excluded.number,
+                      state=excluded.state,
+                      is_draft=excluded.is_draft,
+                      updated_at=excluded.updated_at,
+                      payload_json=excluded.payload_json,
+                      fetched_at=excluded.fetched_at,
+                      enriched_for_updated_at=excluded.enriched_for_updated_at,
+                      last_enriched_at=excluded.last_enriched_at,
+                      enrich_level=excluded.enrich_level
+                    """,
+                    rows,
+                )
+            else:
+                conn.executemany(
+                    """
+                    INSERT INTO ingest_entities (
+                      repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at,
+                      enriched_for_updated_at, last_enriched_at, enrich_level
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(repo, entity_id) DO UPDATE SET
+                      kind=excluded.kind,
+                      number=excluded.number,
+                      state=excluded.state,
+                      is_draft=excluded.is_draft,
+                      updated_at=excluded.updated_at,
+                      payload_json=CASE
+                        WHEN excluded.updated_at = ingest_entities.updated_at
+                          AND COALESCE(json_array_length(json_extract(excluded.payload_json, '$.changed_files')), 0) = 0
+                          AND COALESCE(json_array_length(json_extract(ingest_entities.payload_json, '$.changed_files')), 0) > 0
+                        THEN ingest_entities.payload_json
+                        ELSE excluded.payload_json
+                      END,
+                      fetched_at=excluded.fetched_at,
+                      enriched_for_updated_at=CASE
+                        WHEN excluded.updated_at = ingest_entities.updated_at
+                          AND COALESCE(json_array_length(json_extract(excluded.payload_json, '$.changed_files')), 0) = 0
+                          AND COALESCE(json_array_length(json_extract(ingest_entities.payload_json, '$.changed_files')), 0) > 0
+                        THEN ingest_entities.enriched_for_updated_at
+                        ELSE NULL
+                      END,
+                      last_enriched_at=CASE
+                        WHEN excluded.updated_at = ingest_entities.updated_at
+                          AND COALESCE(json_array_length(json_extract(excluded.payload_json, '$.changed_files')), 0) = 0
+                          AND COALESCE(json_array_length(json_extract(ingest_entities.payload_json, '$.changed_files')), 0) > 0
+                        THEN ingest_entities.last_enriched_at
+                        ELSE NULL
+                      END,
+                      enrich_level=CASE
+                        WHEN excluded.updated_at = ingest_entities.updated_at
+                          AND COALESCE(json_array_length(json_extract(excluded.payload_json, '$.changed_files')), 0) = 0
+                          AND COALESCE(json_array_length(json_extract(ingest_entities.payload_json, '$.changed_files')), 0) > 0
+                        THEN ingest_entities.enrich_level
+                        ELSE NULL
+                      END
+                    """,
+                    rows,
+                )
             conn.commit()
         return len(entities)
 
@@ -323,7 +403,8 @@ class SQLiteStorage:
                   COUNT(*) AS total,
                   SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.changed_files')), 0) = 0 THEN 1 ELSE 0 END) AS missing_changed_files,
                   SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.diff_hunks')), 0) = 0 THEN 1 ELSE 0 END) AS missing_diff_hunks,
-                  SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.ci_status'), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS ci_unknown
+                  SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.ci_status'), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS ci_unknown,
+                  SUM(CASE WHEN enriched_for_updated_at IS NOT NULL THEN 1 ELSE 0 END) AS enriched_rows
                 FROM ingest_entities
                 WHERE repo = ?
                 """,
@@ -335,12 +416,32 @@ class SQLiteStorage:
                 "missing_changed_files": 0,
                 "missing_diff_hunks": 0,
                 "ci_unknown": 0,
+                "enriched_rows": 0,
             }
         return {
             "total": int(row["total"] or 0),
             "missing_changed_files": int(row["missing_changed_files"] or 0),
             "missing_diff_hunks": int(row["missing_diff_hunks"] or 0),
             "ci_unknown": int(row["ci_unknown"] or 0),
+            "enriched_rows": int(row["enriched_rows"] or 0),
+        }
+
+    def get_enrichment_watermarks(self, repo: str) -> dict[str, dict[str, str | None]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT entity_id, enriched_for_updated_at, enrich_level
+                FROM ingest_entities
+                WHERE repo = ?
+                """,
+                (repo,),
+            ).fetchall()
+        return {
+            row["entity_id"]: {
+                "enriched_for_updated_at": row["enriched_for_updated_at"],
+                "enrich_level": row["enrich_level"],
+            }
+            for row in rows
         }
 
     def mark_entities_closed_except(self, repo: str, *, kind: str, seen_entity_ids: set[str]) -> int:

@@ -76,6 +76,11 @@ carapace --log-level INFO process-stored \
   --enrich-workers 8
 ```
 
+Enrichment watermark behavior:
+- Enrichment is tracked per PR by `updated_at` revision.
+- Re-processing skips PR enrichment when the stored watermark already matches current `updated_at`.
+- Full ingest does not erase enriched payloads when PR revision has not changed.
+
 Optional routing application:
 ```bash
 # dry run (default)

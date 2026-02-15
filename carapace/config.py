@@ -100,6 +100,7 @@ class IngestConfig(BaseModel):
     resume: bool = True
     enrich_pr_details: bool = False
     enrich_issue_comments: bool = False
+    state_checkpoint_interval_pages: int = 5
 
 
 class EmbeddingConfig(BaseModel):

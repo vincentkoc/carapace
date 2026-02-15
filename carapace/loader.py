@@ -69,18 +69,20 @@ def ingest_github_to_sqlite(
         if max_prs:
             page_entities = page_entities[: max(0, max_prs - total_prs)]
         seen_pr_ids.update(entity.id for entity in page_entities)
-        written = storage.upsert_ingest_entities(repo, page_entities)
+        written = storage.upsert_ingest_entities(repo, page_entities, source="ingest")
         total_prs += written
         pr_pages += 1
         pr_page += 1
 
-        storage.save_ingest_state(
-            repo,
-            pr_next_page=pr_page,
-            issue_next_page=issue_page,
-            phase="prs",
-            completed=False,
-        )
+        checkpoint_interval = max(1, ingest_cfg.state_checkpoint_interval_pages)
+        if pr_pages % checkpoint_interval == 0:
+            storage.save_ingest_state(
+                repo,
+                pr_next_page=pr_page,
+                issue_next_page=issue_page,
+                phase="prs",
+                completed=False,
+            )
         logger.debug("Ingested PR page %s (%s entities, total=%s)", pr_page - 1, written, total_prs)
 
     if ingest_cfg.include_issues:
@@ -99,18 +101,20 @@ def ingest_github_to_sqlite(
             if max_issues:
                 page_entities = page_entities[: max(0, max_issues - total_issues)]
             seen_issue_ids.update(entity.id for entity in page_entities)
-            written = storage.upsert_ingest_entities(repo, page_entities)
+            written = storage.upsert_ingest_entities(repo, page_entities, source="ingest")
             total_issues += written
             issue_pages += 1
             issue_page += 1
 
-            storage.save_ingest_state(
-                repo,
-                pr_next_page=pr_page,
-                issue_next_page=issue_page,
-                phase="issues",
-                completed=False,
-            )
+            checkpoint_interval = max(1, ingest_cfg.state_checkpoint_interval_pages)
+            if issue_pages % checkpoint_interval == 0:
+                storage.save_ingest_state(
+                    repo,
+                    pr_next_page=pr_page,
+                    issue_next_page=issue_page,
+                    phase="issues",
+                    completed=False,
+                )
             logger.debug("Ingested issue page %s (%s entities, total=%s)", issue_page - 1, written, total_issues)
 
     # Reconcile entity closures only on full refresh from page 1 with open-only fetch.

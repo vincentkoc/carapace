@@ -237,11 +237,12 @@ def _run_process_stored(args: argparse.Namespace) -> int:
 
     quality = storage.ingest_quality_stats(args.repo)
     logger.info(
-        "Ingest quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s",
+        "Ingest quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s enriched_rows=%s",
         quality["total"],
         quality["missing_changed_files"],
         quality["missing_diff_hunks"],
         quality["ci_unknown"],
+        quality["enriched_rows"],
     )
 
     entities = storage.load_ingested_entities(
@@ -258,9 +259,21 @@ def _run_process_stored(args: argparse.Namespace) -> int:
 
     if args.enrich_missing:
         connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
+        watermarks = storage.get_enrichment_watermarks(args.repo)
         targets: list[tuple[int, SourceEntity]] = []
         for idx, entity in enumerate(entities):
-            needs = entity.kind.value == "pr" and (len(entity.changed_files) == 0 or entity.ci_status.value == "unknown")
+            if entity.kind.value != "pr":
+                continue
+            wm = watermarks.get(entity.id, {})
+            enriched_for_updated_at = wm.get("enriched_for_updated_at")
+            level = wm.get("enrich_level")
+            same_version = enriched_for_updated_at == entity.updated_at.isoformat()
+            if args.enrich_mode == "minimal":
+                needs = (not same_version) or (len(entity.changed_files) == 0)
+            else:
+                needs = (not same_version) or (level != "full") or (len(entity.changed_files) == 0) or (
+                    entity.ci_status.value == "unknown"
+                )
             if needs:
                 targets.append((idx, entity))
         if targets:
@@ -301,7 +314,12 @@ def _run_process_stored(args: argparse.Namespace) -> int:
                     if completed % 50 == 0 or completed == len(targets):
                         logger.debug("Enrichment progress: %s/%s", completed, len(targets))
 
-            storage.upsert_ingest_entities(args.repo, changed_entities)
+            storage.upsert_ingest_entities(
+                args.repo,
+                changed_entities,
+                source="enrichment",
+                enrich_level=args.enrich_mode,
+            )
             logger.info("Persisted enriched entity data back to SQLite")
 
     # Re-apply state filters after enrichment may have changed PR state (e.g. closed during processing).

@@ -38,6 +38,7 @@ ingest:
   resume: true
   enrich_pr_details: false
   enrich_issue_comments: false
+  state_checkpoint_interval_pages: 5
 
 storage:
   backend: sqlite

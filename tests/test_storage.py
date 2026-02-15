@@ -123,3 +123,42 @@ def test_mark_entities_closed_except(tmp_path: Path) -> None:
     state_by_id = {entity.id: entity.state for entity in loaded}
     assert state_by_id["pr:1"] == "open"
     assert state_by_id["pr:2"] == "closed"
+
+
+def test_ingest_upsert_preserves_enriched_payload_on_same_updated_at(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    enriched = SourceEntity.model_validate(
+        {
+            "id": "pr:10",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "state": "open",
+            "title": "PR",
+            "author": "a",
+            "updated_at": "2026-02-15T00:00:00Z",
+            "changed_files": ["src/core.py"],
+        }
+    )
+    storage.upsert_ingest_entities("acme/repo", [enriched], source="enrichment", enrich_level="minimal")
+
+    # Lightweight ingest payload for same revision should not erase enriched details.
+    lightweight = SourceEntity.model_validate(
+        {
+            "id": "pr:10",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "state": "open",
+            "title": "PR",
+            "author": "a",
+            "updated_at": "2026-02-15T00:00:00Z",
+            "changed_files": [],
+        }
+    )
+    storage.upsert_ingest_entities("acme/repo", [lightweight], source="ingest")
+    loaded = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
+    assert loaded[0].changed_files == ["src/core.py"]
+
+    watermarks = storage.get_enrichment_watermarks("acme/repo")
+    assert watermarks["pr:10"]["enriched_for_updated_at"] == "2026-02-15T00:00:00+00:00"
