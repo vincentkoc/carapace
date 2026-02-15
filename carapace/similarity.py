@@ -279,9 +279,24 @@ def score_pair(
     return total, breakdown
 
 
-def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConfig) -> EdgeTier | None:
+def _edge_tier(
+    score: float,
+    breakdown: SimilarityBreakdown,
+    cfg: SimilarityConfig,
+    entity_a_id: str,
+    entity_b_id: str,
+) -> EdgeTier | None:
+    kind_a = entity_a_id.split(":", maxsplit=1)[0]
+    kind_b = entity_b_id.split(":", maxsplit=1)[0]
+    is_issue_pr = {kind_a, kind_b} == {"issue", "pr"}
+
     if breakdown.hard_link_overlap >= cfg.hard_link_strong_overlap:
-        return EdgeTier.STRONG
+        if breakdown.lineage > 0.0 or breakdown.structure >= cfg.weak_structure_min:
+            return EdgeTier.STRONG
+        if is_issue_pr and breakdown.semantic >= cfg.hard_link_issue_pr_strong_semantic_min:
+            return EdgeTier.STRONG
+        if not is_issue_pr and breakdown.semantic >= cfg.hard_link_pr_strong_semantic_min:
+            return EdgeTier.STRONG
 
     has_structure = (breakdown.structure > 0.0) or (breakdown.lineage > 0.0)
     has_lineage_or_hunk = (breakdown.lineage > 0.0) or (breakdown.hunk_overlap > 0.0)
@@ -292,7 +307,7 @@ def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConf
 
     # For unstructured entities (e.g., issue templates), require very high semantic + lexical agreement.
     if not has_structure:
-        if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and breakdown.semantic >= cfg.weak_semantic_min:
+        if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and breakdown.semantic >= cfg.hard_link_weak_semantic_min:
             return EdgeTier.WEAK
         if breakdown.soft_link_overlap > 0.0 and breakdown.semantic >= cfg.weak_semantic_min:
             return EdgeTier.WEAK
@@ -301,7 +316,7 @@ def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConf
         return None
 
     if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and (
-        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min
+        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.hard_link_weak_semantic_min
     ):
         return EdgeTier.WEAK
 
@@ -340,7 +355,7 @@ def compute_similarity_edges_with_stats(
             stats.unique_pairs_scored += 1
 
             score, breakdown = score_pair(fingerprints[a], fingerprints[b], cfg, idx=idx)
-            tier = _edge_tier(score, breakdown, cfg)
+            tier = _edge_tier(score, breakdown, cfg, a, b)
             if tier is None:
                 continue
 

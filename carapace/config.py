@@ -59,6 +59,9 @@ class SimilarityConfig(BaseModel):
     lineage_strong_overlap: float = 0.50
     hard_link_strong_overlap: float = 0.50
     hard_link_weak_overlap: float = 0.20
+    hard_link_pr_strong_semantic_min: float = 0.50
+    hard_link_issue_pr_strong_semantic_min: float = 0.35
+    hard_link_weak_semantic_min: float = 0.45
     weak_structure_min: float = 0.25
     weak_semantic_min: float = 0.30
     weak_minhash_min: float = 0.40
