@@ -103,11 +103,12 @@ def rank_canonicals(
         canonical = ranked[0][0]
 
         member_decisions: list[MemberDecision] = []
-        for member, score in ranked:
+        for member, canonical_score in ranked:
             if member == canonical:
                 state = DecisionState.CANONICAL
                 reason = "Top canonical score in cluster"
                 duplicate_of = None
+                member_score = canonical_score
             else:
                 sim_to_canonical = _similarity(edge_table, member, canonical)
                 lineage_to_canonical = _lineage_overlap(edge_table, member, canonical)
@@ -119,12 +120,13 @@ def rank_canonicals(
                     state = DecisionState.RELATED
                     reason = f"Related cluster member with similarity {sim_to_canonical:.2f}"
                     duplicate_of = None
+                member_score = sim_to_canonical
 
             member_decisions.append(
                 MemberDecision(
                     entity_id=member,
                     state=state,
-                    score=score,
+                    score=member_score,
                     reason=reason,
                     duplicate_of=duplicate_of,
                 )

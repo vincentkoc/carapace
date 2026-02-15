@@ -164,6 +164,37 @@ def test_compute_similarity_edges_with_stats() -> None:
     assert stats.edges_emitted == 1
 
 
+def test_pr_semantic_structure_gate_recovers_low_total_near_duplicates() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True)
+    a = _fp(
+        "pr:1",
+        files=["src/a.py"],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=["h1"],
+        embedding=[1.0, 0.0],
+        tokens=["gateway", "token"],
+        additions=10,
+        deletions=5,
+    )
+    b = _fp(
+        "pr:2",
+        files=["src/b.py"],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=["h1"],
+        embedding=[1.0, 0.0],
+        tokens=["gateway", "token"],
+        additions=12,
+        deletions=4,
+    )
+    edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
+    assert len(edges) == 1
+    assert edges[0].tier.value in {"weak", "strong"}
+
+
 def test_unstructured_pairs_require_very_high_semantic_and_lexical_match() -> None:
     cfg = SimilarityConfig(use_advanced_algorithms=True)
     a = _fp(

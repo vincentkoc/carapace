@@ -81,6 +81,7 @@ def test_lineage_overlap_marks_duplicate_even_below_duplicate_threshold() -> Non
     d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
     non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
     assert non_canonical.state == DecisionState.DUPLICATE
+    assert non_canonical.score == 0.6
 
 
 def test_tie_margin_marks_runner_up_for_human_tie_break() -> None:

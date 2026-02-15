@@ -305,6 +305,15 @@ def _edge_tier(
     if has_lineage_or_hunk and (breakdown.minhash >= cfg.strong_minhash_min or breakdown.winnow >= cfg.strong_winnow_min):
         return EdgeTier.STRONG
 
+    # Recover near-duplicate PRs where title/body and diff semantics are close but weighted total score stays low.
+    if kind_a == "pr" and kind_b == "pr":
+        if (
+            breakdown.structure >= cfg.pr_semantic_structure_min
+            and breakdown.semantic >= cfg.pr_semantic_min
+            and breakdown.simhash >= cfg.pr_semantic_simhash_min
+        ):
+            return EdgeTier.WEAK
+
     # For unstructured entities (e.g., issue templates), require very high semantic + lexical agreement.
     if not has_structure:
         if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and breakdown.semantic >= cfg.hard_link_weak_semantic_min:

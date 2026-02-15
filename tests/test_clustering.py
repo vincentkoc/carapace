@@ -42,4 +42,21 @@ def test_weak_without_shared_strong_neighbor_does_not_merge() -> None:
             _edge("a", "b", EdgeTier.WEAK),
         ],
     )
-    assert len(clusters) == 3
+    members = [set(c.members) for c in clusters]
+    assert {"a", "b"} in members
+    assert {"c"} in members
+
+
+def test_weak_chain_without_strong_neighbors_does_not_bridge_all_nodes() -> None:
+    clusters = build_clusters(
+        ["a", "b", "c"],
+        [
+            _edge("a", "b", EdgeTier.WEAK),
+            _edge("b", "c", EdgeTier.WEAK),
+        ],
+    )
+    # Avoid transitive weak-chain collapse; only isolated weak pairs can merge.
+    members = [set(c.members) for c in clusters]
+    assert {"a"} in members
+    assert {"b"} in members
+    assert {"c"} in members

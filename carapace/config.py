@@ -62,6 +62,9 @@ class SimilarityConfig(BaseModel):
     hard_link_pr_strong_semantic_min: float = 0.50
     hard_link_issue_pr_strong_semantic_min: float = 0.35
     hard_link_weak_semantic_min: float = 0.45
+    pr_semantic_structure_min: float = 0.20
+    pr_semantic_min: float = 0.70
+    pr_semantic_simhash_min: float = 0.70
     weak_structure_min: float = 0.25
     weak_semantic_min: float = 0.30
     weak_minhash_min: float = 0.40
@@ -91,7 +94,7 @@ class CanonicalConfig(BaseModel):
     weight_approvals: float = 1.5
     weight_priority: float = 1.0
     weight_size_penalty: float = 1.0
-    duplicate_threshold: float = 0.78
+    duplicate_threshold: float = 0.35
     tie_margin: float = 0.10
 
 
