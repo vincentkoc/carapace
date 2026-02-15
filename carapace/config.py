@@ -46,6 +46,8 @@ class SimilarityConfig(BaseModel):
     weight_winnow: float = 0.07
     size_penalty_weight: float = 0.10
     lineage_strong_overlap: float = 0.50
+    hard_link_strong_overlap: float = 0.50
+    hard_link_weak_overlap: float = 0.20
     weak_structure_min: float = 0.25
     weak_semantic_min: float = 0.30
     weak_minhash_min: float = 0.40
