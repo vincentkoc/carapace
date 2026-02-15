@@ -12,7 +12,11 @@ PRECOMMIT ?= pre-commit
 else
 PYTHON ?= $(VENV_PY)
 PIP ?= $(VENV_PIP)
+ifneq ($(wildcard $(VENV_PRECOMMIT)),)
 PRECOMMIT ?= $(VENV_PRECOMMIT)
+else
+PRECOMMIT ?= pre-commit
+endif
 endif
 
 define warn_if_no_venv
