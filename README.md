@@ -73,8 +73,16 @@ carapace --log-level INFO process-stored \
   --output-dir ./carapace-out/openclaw \
   --enrich-missing \
   --enrich-mode minimal \
-  --enrich-workers 8
+  --enrich-workers 8 \
+  --enrich-progress-every 100 \
+  --enrich-flush-every 50 \
+  --enrich-heartbeat-seconds 10
 ```
+
+Notes:
+- Enrichment now logs progress at INFO with rate and ETA.
+- Enrichment writes back to SQLite in batches (`--enrich-flush-every`) so interrupted runs can resume without losing all progress.
+- `minimal` enrichment uses a fast files-only API path and records watermarks by PR `updated_at`.
 
 Enrichment watermark behavior:
 - Enrichment is tracked per PR by `updated_at` revision.
