@@ -162,3 +162,37 @@ def test_ingest_upsert_preserves_enriched_payload_on_same_updated_at(tmp_path: P
 
     watermarks = storage.get_enrichment_watermarks("acme/repo")
     assert watermarks["pr:10"]["enriched_for_updated_at"] == "2026-02-15T00:00:00+00:00"
+
+
+def test_get_enrichment_watermarks_can_filter_by_kind(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    pr_entity = SourceEntity.model_validate(
+        {
+            "id": "pr:10",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "state": "open",
+            "title": "PR",
+            "author": "a",
+            "updated_at": "2026-02-15T00:00:00Z",
+            "changed_files": ["src/core.py"],
+        }
+    )
+    issue_entity = SourceEntity.model_validate(
+        {
+            "id": "issue:20",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "state": "open",
+            "title": "Issue",
+            "author": "b",
+            "updated_at": "2026-02-15T00:00:00Z",
+        }
+    )
+    storage.upsert_ingest_entities("acme/repo", [pr_entity], source="enrichment", enrich_level="minimal")
+    storage.upsert_ingest_entities("acme/repo", [issue_entity], source="enrichment", enrich_level="minimal")
+
+    pr_watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
+    assert set(pr_watermarks.keys()) == {"pr:10"}

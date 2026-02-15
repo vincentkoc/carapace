@@ -426,16 +426,22 @@ class SQLiteStorage:
             "enriched_rows": int(row["enriched_rows"] or 0),
         }
 
-    def get_enrichment_watermarks(self, repo: str) -> dict[str, dict[str, str | None]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
+    def get_enrichment_watermarks(self, repo: str, kind: str | None = None) -> dict[str, dict[str, str | None]]:
+        predicates = ["repo = ?"]
+        params: list[object] = [repo]
+        if kind is not None:
+            predicates.append("kind = ?")
+            params.append(kind)
+
+        sql = (
+            """
                 SELECT entity_id, enriched_for_updated_at, enrich_level
                 FROM ingest_entities
-                WHERE repo = ?
-                """,
-                (repo,),
-            ).fetchall()
+                WHERE """
+            + " AND ".join(predicates)
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
         return {
             row["entity_id"]: {
                 "enriched_for_updated_at": row["enriched_for_updated_at"],

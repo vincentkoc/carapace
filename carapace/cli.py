@@ -6,7 +6,9 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from datetime import UTC, datetime, timedelta
+import time
 
 import yaml
 
@@ -145,6 +147,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=6,
         help="Parallel workers used for enrichment API calls",
     )
+    process.add_argument(
+        "--enrich-progress-every",
+        type=int,
+        default=100,
+        help="Log enrichment progress every N completed PRs",
+    )
+    process.add_argument(
+        "--enrich-flush-every",
+        type=int,
+        default=50,
+        help="Persist enrichment results every N completed PRs",
+    )
+    process.add_argument(
+        "--enrich-heartbeat-seconds",
+        type=float,
+        default=10.0,
+        help="Emit heartbeat progress logs at this interval while enrichment is running",
+    )
     process.add_argument("--apply-routing", action="store_true", help="Apply labels/comments using routing decisions")
     process.add_argument(
         "--live-actions",
@@ -259,10 +279,17 @@ def _run_process_stored(args: argparse.Namespace) -> int:
 
     if args.enrich_missing:
         connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
-        watermarks = storage.get_enrichment_watermarks(args.repo)
+        watermarks = storage.get_enrichment_watermarks(args.repo, kind="pr")
         targets: list[tuple[int, SourceEntity]] = []
+        skipped_recent = 0
+        recent_cutoff: datetime | None = None
+        if config.low_pass.ignore_recent_pr_hours is not None:
+            recent_cutoff = datetime.now(UTC) - timedelta(hours=config.low_pass.ignore_recent_pr_hours)
         for idx, entity in enumerate(entities):
             if entity.kind.value != "pr":
+                continue
+            if recent_cutoff is not None and entity.updated_at >= recent_cutoff:
+                skipped_recent += 1
                 continue
             wm = watermarks.get(entity.id, {})
             enriched_for_updated_at = wm.get("enriched_for_updated_at")
@@ -277,6 +304,12 @@ def _run_process_stored(args: argparse.Namespace) -> int:
             if needs:
                 targets.append((idx, entity))
         if targets:
+            if skipped_recent:
+                logger.info(
+                    "Skipped %s recent PRs from enrichment using ignore_recent_pr_hours=%s",
+                    skipped_recent,
+                    config.low_pass.ignore_recent_pr_hours,
+                )
             logger.info(
                 "Enriching %s PR entities with missing details (mode=%s workers=%s)",
                 len(targets),
@@ -284,9 +317,10 @@ def _run_process_stored(args: argparse.Namespace) -> int:
                 args.enrich_workers,
             )
 
-            changed_entities: list[SourceEntity] = []
+            enriched_updates: list[SourceEntity] = []
+            state_updates: list[SourceEntity] = []
 
-            def _enrich_one(target: tuple[int, SourceEntity]) -> tuple[int, SourceEntity]:
+            def _enrich_one(target: tuple[int, SourceEntity]) -> tuple[int, SourceEntity, bool]:
                 entity_index, entity_obj = target
                 try:
                     enriched_entity = connector.enrich_entity(
@@ -294,32 +328,81 @@ def _run_process_stored(args: argparse.Namespace) -> int:
                         include_comments=args.enrich_comments,
                         mode=args.enrich_mode,
                     )
-                    return entity_index, enriched_entity
+                    return entity_index, enriched_entity, True
                 except Exception as exc:  # pragma: no cover - network/runtime dependent
                     message = str(exc)
                     if "404" in message and entity_obj.kind.value == "pr":
                         logger.debug("PR %s resolved as closed during enrichment", entity_obj.id)
-                        return entity_index, entity_obj.model_copy(update={"state": "closed"})
+                        return entity_index, entity_obj.model_copy(update={"state": "closed"}), False
                     logger.warning("Failed to enrich %s: %s", entity_obj.id, exc)
-                    return entity_index, entity_obj
+                    return entity_index, entity_obj, False
 
             completed = 0
-            with ThreadPoolExecutor(max_workers=max(1, args.enrich_workers)) as pool:
-                future_to_target = {pool.submit(_enrich_one, target): target for target in targets}
-                for future in as_completed(future_to_target):
-                    entity_index, enriched_entity = future.result()
-                    entities[entity_index] = enriched_entity
-                    changed_entities.append(enriched_entity)
-                    completed += 1
-                    if completed % 50 == 0 or completed == len(targets):
-                        logger.debug("Enrichment progress: %s/%s", completed, len(targets))
+            total_targets = len(targets)
+            target_by_index = {index: entity for index, entity in targets}
+            progress_every = max(1, args.enrich_progress_every)
+            flush_every = max(1, args.enrich_flush_every)
+            heartbeat_seconds = max(1.0, args.enrich_heartbeat_seconds)
+            started_at = time.monotonic()
+            last_progress_log = started_at
 
-            storage.upsert_ingest_entities(
-                args.repo,
-                changed_entities,
-                source="enrichment",
-                enrich_level=args.enrich_mode,
-            )
+            def _log_progress(force: bool = False) -> None:
+                nonlocal last_progress_log
+                now = time.monotonic()
+                if not force and (now - last_progress_log) < heartbeat_seconds and completed % progress_every != 0:
+                    return
+                elapsed = max(0.001, now - started_at)
+                rate = completed / elapsed
+                remaining = total_targets - completed
+                eta_seconds = int(remaining / rate) if rate > 0 else -1
+                logger.info(
+                    "Enrichment progress: %s/%s (%.1f%%) rate=%.2f/s eta=%ss",
+                    completed,
+                    total_targets,
+                    (completed * 100.0) / max(1, total_targets),
+                    rate,
+                    eta_seconds if eta_seconds >= 0 else "?",
+                )
+                last_progress_log = now
+
+            def _flush_updates() -> None:
+                if enriched_updates:
+                    storage.upsert_ingest_entities(
+                        args.repo,
+                        list(enriched_updates),
+                        source="enrichment",
+                        enrich_level=args.enrich_mode,
+                    )
+                    enriched_updates.clear()
+                if state_updates:
+                    storage.upsert_ingest_entities(args.repo, list(state_updates), source="ingest")
+                    state_updates.clear()
+
+            with ThreadPoolExecutor(max_workers=max(1, args.enrich_workers)) as pool:
+                pending = {pool.submit(_enrich_one, target): target for target in targets}
+                while pending:
+                    done, pending = wait(pending, timeout=heartbeat_seconds, return_when=FIRST_COMPLETED)
+                    if not done:
+                        _log_progress(force=True)
+                        continue
+                    for future in done:
+                        entity_index, enriched_entity, enrichment_success = future.result()
+                        original_entity = target_by_index.get(entity_index, entities[entity_index])
+                        if enrichment_success:
+                            enriched_updates.append(enriched_entity)
+                        elif enriched_entity.state != original_entity.state:
+                            state_updates.append(enriched_entity)
+
+                        entities[entity_index] = enriched_entity
+                        completed += 1
+
+                        if completed % flush_every == 0:
+                            _flush_updates()
+
+                        _log_progress(force=completed == total_targets)
+
+            _flush_updates()
+            _log_progress(force=True)
             logger.info("Persisted enriched entity data back to SQLite")
 
     # Re-apply state filters after enrichment may have changed PR state (e.g. closed during processing).
