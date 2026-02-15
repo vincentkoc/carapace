@@ -22,6 +22,7 @@ from carapace.models import (
 )
 from carapace.clustering import build_clusters
 from carapace.similarity import compute_similarity_edges
+from carapace.storage.base import StorageBackend
 
 
 def _provider_from_config(config: CarapaceConfig) -> EmbeddingProvider:
@@ -45,10 +46,13 @@ class CarapaceEngine:
         config: CarapaceConfig,
         embedding_provider: EmbeddingProvider | None = None,
         hooks: HookManager | None = None,
+        storage: StorageBackend | None = None,
     ) -> None:
         self.config = config
         self.embedding_provider = embedding_provider or _provider_from_config(config)
         self.hooks = hooks or HookManager()
+        self.storage = storage or self._storage_from_config(config)
+        self.last_fingerprints = {}
 
     @classmethod
     def from_repo(
@@ -59,6 +63,7 @@ class CarapaceEngine:
         runtime_override: dict | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         hooks: HookManager | None = None,
+        storage: StorageBackend | None = None,
     ) -> "CarapaceEngine":
         config = load_effective_config(
             repo_path=repo_path,
@@ -66,7 +71,7 @@ class CarapaceEngine:
             system_defaults=system_defaults,
             runtime_override=runtime_override,
         )
-        return cls(config=config, embedding_provider=embedding_provider, hooks=hooks)
+        return cls(config=config, embedding_provider=embedding_provider, hooks=hooks, storage=storage)
 
     def scan_entities(self, entities: list[SourceEntity]) -> EngineReport:
         context = {"entity_count": len(entities)}
@@ -105,6 +110,7 @@ class CarapaceEngine:
             for entity, vector in zip(active_entities, vectors):
                 fingerprints[entity.id] = build_fingerprint(entity, vector)
             self.hooks.emit(HookName.AFTER_FINGERPRINT, context, {"count": len(fingerprints)})
+        self.last_fingerprints = fingerprints
 
         self.hooks.emit(HookName.BEFORE_SIMILARITY, context, {})
         edges = compute_similarity_edges(fingerprints, self.config.similarity)
@@ -119,7 +125,7 @@ class CarapaceEngine:
         routing = self._build_routing(entities, low_pass, canonical)
         self.hooks.emit(HookName.AFTER_ACTION, context, {"routing": len(routing)})
 
-        return EngineReport(
+        report = EngineReport(
             processed_entities=len(entities),
             active_entities=len(active_entities),
             suppressed_entities=suppressed,
@@ -130,6 +136,14 @@ class CarapaceEngine:
             low_pass=list(low_pass.values()),
             routing=routing,
         )
+        if self.storage and self.config.storage.persist_runs:
+            self.storage.save_run(
+                entities=entities,
+                fingerprints=fingerprints,
+                report=report,
+                embedding_model=self.embedding_provider.model_id(),
+            )
+        return report
 
     def _build_routing(
         self,
@@ -173,3 +187,13 @@ class CarapaceEngine:
             routing.append(RoutingDecision(entity_id=entity.id, labels=sorted(set(labels)), queue_key=queue, comment=comment))
 
         return routing
+
+    @staticmethod
+    def _storage_from_config(config: CarapaceConfig) -> StorageBackend | None:
+        if not config.storage.persist_runs:
+            return None
+        if config.storage.backend == "sqlite":
+            from carapace.storage import SQLiteStorage
+
+            return SQLiteStorage(config.storage.sqlite_path)
+        return None

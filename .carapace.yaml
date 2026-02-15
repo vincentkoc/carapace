@@ -25,3 +25,8 @@ action:
   safe_mode: true
   add_comments: true
   queue_on_suppress: true
+
+storage:
+  backend: sqlite
+  sqlite_path: .carapace/carapace.db
+  persist_runs: true

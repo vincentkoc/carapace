@@ -82,6 +82,14 @@ class EmbeddingConfig(BaseModel):
     timeout_seconds: float = 10.0
 
 
+class StorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = "sqlite"
+    sqlite_path: str = ".carapace/carapace.db"
+    persist_runs: bool = False
+
+
 class CarapaceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,6 +99,7 @@ class CarapaceConfig(BaseModel):
     labels: LabelsConfig = Field(default_factory=LabelsConfig)
     action: ActionConfig = Field(default_factory=ActionConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
