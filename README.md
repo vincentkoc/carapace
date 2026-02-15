@@ -16,6 +16,9 @@
     - Winnowing fingerprints
   - canonical ranking in each cluster
   - routing decisions (canonical, duplicate, related, suppressed)
+- Split ingest/process workflow for large repos:
+  - `ingest-github` loads entities into SQLite with resumable state
+  - `process-stored` processes from persisted ingest snapshot
 - Report bundle output:
   - `triage_report.md`
   - `clusters.json`
@@ -46,6 +49,22 @@ carapace scan-github \
   --save-input-json
 ```
 
+Stateful large-repo workflow (recommended for 3k+ PRs):
+```bash
+# 1) Ingest into SQLite (resumable)
+carapace ingest-github \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --max-prs 0 \
+  --max-issues 0
+
+# 2) Process from stored ingest snapshot
+carapace process-stored \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --output-dir ./carapace-out/openclaw
+```
+
 Optional routing application:
 ```bash
 # dry run (default)
@@ -61,3 +80,21 @@ Carapace loads configuration from repository root `.carapace.yaml` with preceden
 2. repo `.carapace.yaml`
 3. org defaults
 4. system defaults
+
+Ingest controls live under `ingest`:
+- `include_closed`
+- `include_drafts`
+- `include_issues`
+- `page_size`
+- `resume`
+- `enrich_pr_details`
+- `enrich_issue_comments`
+
+Repo safety:
+- By default, GitHub commands validate that `--repo-path` git origin matches `--repo`.
+- Use `--skip-repo-path-check` only when you intentionally want to bypass this.
+
+Debug logging:
+```bash
+carapace --log-level DEBUG ingest-github --repo openclaw/openclaw --repo-path /path/to/openclaw
+```

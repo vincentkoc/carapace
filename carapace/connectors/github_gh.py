@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from carapace.connectors.base import SinkConnector, SourceConnector
 from carapace.models import CIStatus, DiffHunk, EntityKind, ExternalReviewSignal, SourceEntity
 
 _ISSUE_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#(\d+)", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 class GithubUser(BaseModel):
@@ -45,6 +47,8 @@ class GithubPull(BaseModel):
     created_at: datetime
     updated_at: datetime
     author_association: str | None = None
+    state: str = "open"
+    draft: bool = False
 
 
 class GithubIssue(BaseModel):
@@ -60,6 +64,7 @@ class GithubIssue(BaseModel):
     updated_at: datetime
     author_association: str | None = None
     pull_request: dict[str, Any] | None = None
+    state: str = "open"
 
 
 class GithubFile(BaseModel):
@@ -91,9 +96,7 @@ class GithubGhClient:
         items: list[dict[str, Any]] = []
         page = 1
         while True:
-            # TODO: Add explicit GitHub rate-limit backoff/retry strategy for long-running service mode.
-            query = f"{endpoint}{'&' if '?' in endpoint else '?'}per_page={per_page}&page={page}"
-            payload = self._api_json(query)
+            payload = self.get_page(endpoint, page=page, per_page=per_page)
             if not isinstance(payload, list) or not payload:
                 break
             items.extend(payload)
@@ -101,6 +104,14 @@ class GithubGhClient:
                 return items[:max_items]
             page += 1
         return items
+
+    def get_page(self, endpoint: str, *, page: int, per_page: int = 100) -> list[dict[str, Any]]:
+        # TODO: Add explicit GitHub rate-limit backoff/retry strategy for long-running service mode.
+        query = f"{endpoint}{'&' if '?' in endpoint else '?'}per_page={per_page}&page={page}"
+        payload = self._api_json(query)
+        if not isinstance(payload, list):
+            return []
+        return payload
 
     def _api_json(self, endpoint: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
         cmd = [self.gh_bin, "api", f"repos/{self.repo}/{endpoint.lstrip('/')}" if not endpoint.startswith("repos/") else endpoint]
@@ -137,15 +148,30 @@ class GithubGhSourceConnector(SourceConnector):
         max_prs: int = 200,
         include_issues: bool = True,
         max_issues: int = 200,
+        include_drafts: bool = False,
+        include_closed: bool = False,
+        enrich_pr_details: bool = True,
+        enrich_issue_comments: bool = True,
     ) -> list[SourceEntity]:
         entities: list[SourceEntity] = []
+        pr_state = "all" if include_closed else "open"
+        issue_state = "all" if include_closed else "open"
 
-        pulls = self.client.get_paginated("pulls?state=open", max_items=max_prs)
+        pulls = self.client.get_paginated(f"pulls?state={pr_state}", max_items=max_prs)
         for item in pulls:
-            entities.append(self._normalize_pull(GithubPull.model_validate(item)))
+            pull = GithubPull.model_validate(item)
+            if not include_drafts and pull.draft:
+                continue
+            entities.append(
+                self._normalize_pull(
+                    pull,
+                    enrich_details=enrich_pr_details,
+                    enrich_comments=enrich_issue_comments,
+                )
+            )
 
         if include_issues:
-            issues = self.client.get_paginated("issues?state=open", max_items=max_issues)
+            issues = self.client.get_paginated(f"issues?state={issue_state}", max_items=max_issues)
             for item in issues:
                 issue = GithubIssue.model_validate(item)
                 # GitHub issue API includes PRs; ignore them here.
@@ -157,6 +183,43 @@ class GithubGhSourceConnector(SourceConnector):
 
     def list_open_entities(self) -> list[SourceEntity]:
         return self.fetch_open_entities(max_prs=200, include_issues=True, max_issues=200)
+
+    def fetch_pull_page(
+        self,
+        *,
+        page: int,
+        per_page: int = 100,
+        state: str = "open",
+        include_drafts: bool = False,
+        enrich_details: bool = False,
+        enrich_comments: bool = False,
+    ) -> list[SourceEntity]:
+        payload = self.client.get_page(f"pulls?state={state}", page=page, per_page=per_page)
+        logger.debug("Fetched PR page %s (%s items)", page, len(payload))
+        entities: list[SourceEntity] = []
+        for item in payload:
+            pull = GithubPull.model_validate(item)
+            if not include_drafts and pull.draft:
+                continue
+            entities.append(
+                self._normalize_pull(
+                    pull,
+                    enrich_details=enrich_details,
+                    enrich_comments=enrich_comments,
+                )
+            )
+        return entities
+
+    def fetch_issue_page(self, *, page: int, per_page: int = 100, state: str = "open") -> list[SourceEntity]:
+        payload = self.client.get_page(f"issues?state={state}", page=page, per_page=per_page)
+        logger.debug("Fetched issue page %s (%s items)", page, len(payload))
+        entities: list[SourceEntity] = []
+        for item in payload:
+            issue = GithubIssue.model_validate(item)
+            if issue.pull_request:
+                continue
+            entities.append(self._normalize_issue(issue))
+        return entities
 
     def get_entity(self, entity_id: str) -> SourceEntity:
         kind, number = self._parse_entity_id(entity_id)
@@ -188,26 +251,40 @@ class GithubGhSourceConnector(SourceConnector):
             ci_state = _normalize_ci_status(status.get("state"))
         return {"reviews": reviews, "ci_status": ci_state.value}
 
-    def _normalize_pull(self, pull: GithubPull) -> SourceEntity:
+    def _normalize_pull(
+        self,
+        pull: GithubPull,
+        *,
+        enrich_details: bool = True,
+        enrich_comments: bool = True,
+    ) -> SourceEntity:
         number = pull.number
 
-        files_payload = self.client.get_paginated(f"pulls/{number}/files")
-        files = [GithubFile.model_validate(item) for item in files_payload]
-        changed_files = [item.filename for item in files]
-        diff_hunks = _parse_diff_hunks(files)
-
-        reviews_payload = self.client.get_paginated(f"pulls/{number}/reviews")
-        reviews = [GithubReview.model_validate(item) for item in reviews_payload]
-        approvals = sum(1 for review in reviews if (review.state or "").upper() == "APPROVED")
-
-        comments_payload = self.client.get_paginated(f"issues/{number}/comments")
-        comments = [GithubComment.model_validate(item) for item in comments_payload]
-
+        changed_files: list[str] = []
+        diff_hunks: list[DiffHunk] = []
+        approvals = 0
+        reviews_payload: list[dict[str, Any]] = []
+        comments: list[GithubComment] = []
         head_sha = pull.head.get("sha")
         ci_status = CIStatus.UNKNOWN
-        if head_sha:
-            status_payload = self.client._api_json(f"commits/{head_sha}/status") or {}
-            ci_status = _normalize_ci_status(status_payload.get("state"))
+
+        if enrich_details:
+            files_payload = self.client.get_paginated(f"pulls/{number}/files")
+            files = [GithubFile.model_validate(item) for item in files_payload]
+            changed_files = [item.filename for item in files]
+            diff_hunks = _parse_diff_hunks(files)
+
+            reviews_payload = self.client.get_paginated(f"pulls/{number}/reviews")
+            reviews = [GithubReview.model_validate(item) for item in reviews_payload]
+            approvals = sum(1 for review in reviews if (review.state or "").upper() == "APPROVED")
+
+            if head_sha:
+                status_payload = self.client._api_json(f"commits/{head_sha}/status") or {}
+                ci_status = _normalize_ci_status(status_payload.get("state"))
+
+        if enrich_comments:
+            comments_payload = self.client.get_paginated(f"issues/{number}/comments")
+            comments = [GithubComment.model_validate(item) for item in comments_payload]
 
         labels = [label.name for label in pull.labels]
         linked_issues = _extract_linked_issues(pull.body or "")
@@ -218,6 +295,8 @@ class GithubGhSourceConnector(SourceConnector):
             provider="github",
             repo=self.repo,
             kind=EntityKind.PR,
+            state=pull.state,
+            is_draft=bool(pull.draft),
             number=number,
             title=pull.title,
             body=pull.body or "",
@@ -250,6 +329,7 @@ class GithubGhSourceConnector(SourceConnector):
             provider="github",
             repo=self.repo,
             kind=EntityKind.ISSUE,
+            state=issue.state,
             number=issue.number,
             title=issue.title,
             body=issue.body or "",

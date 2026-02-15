@@ -87,6 +87,18 @@ class ActionConfig(BaseModel):
     queue_on_suppress: bool = True
 
 
+class IngestConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    include_closed: bool = False
+    include_drafts: bool = False
+    include_issues: bool = True
+    page_size: int = 100
+    resume: bool = True
+    enrich_pr_details: bool = False
+    enrich_issue_comments: bool = False
+
+
 class EmbeddingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -114,6 +126,7 @@ class CarapaceConfig(BaseModel):
     canonical: CanonicalConfig = Field(default_factory=CanonicalConfig)
     labels: LabelsConfig = Field(default_factory=LabelsConfig)
     action: ActionConfig = Field(default_factory=ActionConfig)
+    ingest: IngestConfig = Field(default_factory=IngestConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
 

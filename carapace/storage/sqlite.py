@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from carapace.models import EngineReport, Fingerprint, SourceEntity
@@ -72,6 +73,30 @@ class SQLiteStorage:
 
                 CREATE INDEX IF NOT EXISTS idx_entities_repo_kind ON entities(repo, kind);
                 CREATE INDEX IF NOT EXISTS idx_entities_number ON entities(number);
+
+                CREATE TABLE IF NOT EXISTS ingest_entities (
+                  repo TEXT NOT NULL,
+                  entity_id TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  number INTEGER,
+                  state TEXT NOT NULL,
+                  is_draft INTEGER NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  fetched_at TEXT NOT NULL,
+                  PRIMARY KEY (repo, entity_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS ingest_state (
+                  repo TEXT PRIMARY KEY,
+                  pr_next_page INTEGER NOT NULL DEFAULT 1,
+                  issue_next_page INTEGER NOT NULL DEFAULT 1,
+                  phase TEXT NOT NULL DEFAULT 'prs',
+                  last_sync_at TEXT,
+                  completed INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_state ON ingest_entities(repo, state, is_draft);
                 """
             )
 
@@ -169,3 +194,115 @@ class SQLiteStorage:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def upsert_ingest_entities(self, repo: str, entities: list[SourceEntity]) -> int:
+        if not entities:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            for entity in entities:
+                conn.execute(
+                    """
+                    INSERT INTO ingest_entities (
+                      repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(repo, entity_id) DO UPDATE SET
+                      kind=excluded.kind,
+                      number=excluded.number,
+                      state=excluded.state,
+                      is_draft=excluded.is_draft,
+                      updated_at=excluded.updated_at,
+                      payload_json=excluded.payload_json,
+                      fetched_at=excluded.fetched_at
+                    """,
+                    (
+                        repo,
+                        entity.id,
+                        entity.kind.value,
+                        entity.number,
+                        entity.state,
+                        1 if entity.is_draft else 0,
+                        entity.updated_at.isoformat(),
+                        entity.model_dump_json(),
+                        now,
+                    ),
+                )
+            conn.commit()
+        return len(entities)
+
+    def load_ingested_entities(
+        self,
+        repo: str,
+        include_closed: bool = False,
+        include_drafts: bool = False,
+    ) -> list[SourceEntity]:
+        predicates = ["repo = ?"]
+        params: list[object] = [repo]
+        if not include_closed:
+            predicates.append("state = 'open'")
+        if not include_drafts:
+            predicates.append("is_draft = 0")
+
+        sql = (
+            "SELECT payload_json FROM ingest_entities WHERE "
+            + " AND ".join(predicates)
+            + " ORDER BY kind, number"
+        )
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return [SourceEntity.model_validate_json(row["payload_json"]) for row in rows]
+
+    def get_ingest_state(self, repo: str) -> dict:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT repo, pr_next_page, issue_next_page, phase, last_sync_at, completed
+                FROM ingest_state
+                WHERE repo = ?
+                """,
+                (repo,),
+            ).fetchone()
+        if row is None:
+            return {
+                "repo": repo,
+                "pr_next_page": 1,
+                "issue_next_page": 1,
+                "phase": "prs",
+                "last_sync_at": None,
+                "completed": 0,
+            }
+        return dict(row)
+
+    def save_ingest_state(
+        self,
+        repo: str,
+        *,
+        pr_next_page: int,
+        issue_next_page: int,
+        phase: str,
+        completed: bool,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ingest_state (
+                  repo, pr_next_page, issue_next_page, phase, last_sync_at, completed
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo) DO UPDATE SET
+                  pr_next_page=excluded.pr_next_page,
+                  issue_next_page=excluded.issue_next_page,
+                  phase=excluded.phase,
+                  last_sync_at=excluded.last_sync_at,
+                  completed=excluded.completed
+                """,
+                (
+                    repo,
+                    pr_next_page,
+                    issue_next_page,
+                    phase,
+                    datetime.now(UTC).isoformat(),
+                    1 if completed else 0,
+                ),
+            )
+            conn.commit()

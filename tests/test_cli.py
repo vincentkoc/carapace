@@ -50,8 +50,25 @@ def test_scan_github_command_uses_connector_and_can_save_input(tmp_path: Path, m
         def __init__(self, repo: str, gh_bin: str = "gh") -> None:
             _ = (repo, gh_bin)
 
-        def fetch_open_entities(self, max_prs: int, include_issues: bool, max_issues: int):
-            _ = (max_prs, include_issues, max_issues)
+        def fetch_open_entities(
+            self,
+            max_prs: int,
+            include_issues: bool,
+            max_issues: int,
+            include_drafts: bool,
+            include_closed: bool,
+            enrich_pr_details: bool,
+            enrich_issue_comments: bool,
+        ):
+            _ = (
+                max_prs,
+                include_issues,
+                max_issues,
+                include_drafts,
+                include_closed,
+                enrich_pr_details,
+                enrich_issue_comments,
+            )
             return [
                 SourceEntity(
                     id="pr:9",
@@ -79,9 +96,102 @@ def test_scan_github_command_uses_connector_and_can_save_input(tmp_path: Path, m
             str(repo_path),
             "--save-input-json",
             "--no-include-issues",
+            "--skip-repo-path-check",
         ]
     )
 
     assert exit_code == 0
     assert (out_dir / "entities.json").exists()
     assert (out_dir / "labels_to_apply.json").exists()
+
+
+def test_ingest_github_command_invokes_loader(tmp_path: Path, monkeypatch) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    class FakeSource:
+        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+            _ = (repo, gh_bin)
+
+    class FakeResult:
+        repo = "acme/repo"
+        prs_ingested = 2
+        issues_ingested = 1
+        pr_pages = 1
+        issue_pages = 1
+
+    called = {"loader": 0}
+
+    def fake_loader(connector, storage, *, repo, ingest_cfg, max_prs, max_issues):
+        _ = (connector, storage, repo, ingest_cfg, max_prs, max_issues)
+        called["loader"] += 1
+        return FakeResult()
+
+    monkeypatch.setattr(cli, "GithubGhSourceConnector", FakeSource)
+    monkeypatch.setattr(cli, "ingest_github_to_sqlite", fake_loader)
+
+    exit_code = cli.main(
+        [
+            "ingest-github",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--skip-repo-path-check",
+        ]
+    )
+    assert exit_code == 0
+    assert called["loader"] == 1
+
+
+def test_process_stored_command_reads_sqlite_and_writes_output(tmp_path: Path) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    out_dir = tmp_path / "out"
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="Fix parser",
+                body="Fixes #1",
+                author="alice",
+                changed_files=["src/parser.py"],
+                ci_status=CIStatus.PASS,
+            )
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        """
+storage:
+  backend: sqlite
+  sqlite_path: .carapace/carapace.db
+  persist_runs: false
+"""
+    )
+
+    exit_code = cli.main(
+        [
+            "process-stored",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--output-dir",
+            str(out_dir),
+            "--skip-repo-path-check",
+        ]
+    )
+    assert exit_code == 0
+    assert (out_dir / "triage_report.md").exists()

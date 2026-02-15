@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from carapace.canonical import rank_canonicals
@@ -23,6 +24,8 @@ from carapace.models import (
 from carapace.clustering import build_clusters
 from carapace.similarity import compute_similarity_edges
 from carapace.storage.base import StorageBackend
+
+logger = logging.getLogger(__name__)
 
 
 def _provider_from_config(config: CarapaceConfig) -> EmbeddingProvider:
@@ -74,6 +77,7 @@ class CarapaceEngine:
         return cls(config=config, embedding_provider=embedding_provider, hooks=hooks, storage=storage)
 
     def scan_entities(self, entities: list[SourceEntity]) -> EngineReport:
+        logger.info("Starting scan for %s entities", len(entities))
         context = {"entity_count": len(entities)}
         self.hooks.emit(HookName.BEFORE_LOW_PASS, context, {})
 
@@ -101,6 +105,12 @@ class CarapaceEngine:
                 "skipped": skipped,
             },
         )
+        logger.debug(
+            "Low-pass complete: active=%s suppressed=%s skipped=%s",
+            len(active_entities),
+            suppressed,
+            skipped,
+        )
 
         fingerprints = {}
         if active_entities:
@@ -110,20 +120,24 @@ class CarapaceEngine:
             for entity, vector in zip(active_entities, vectors):
                 fingerprints[entity.id] = build_fingerprint(entity, vector)
             self.hooks.emit(HookName.AFTER_FINGERPRINT, context, {"count": len(fingerprints)})
+            logger.debug("Fingerprinting complete: %s fingerprints", len(fingerprints))
         self.last_fingerprints = fingerprints
 
         self.hooks.emit(HookName.BEFORE_SIMILARITY, context, {})
         edges = compute_similarity_edges(fingerprints, self.config.similarity)
         clusters = build_clusters([entity.id for entity in active_entities], edges)
         self.hooks.emit(HookName.AFTER_SIMILARITY, context, {"edges": len(edges), "clusters": len(clusters)})
+        logger.debug("Similarity complete: edges=%s clusters=%s", len(edges), len(clusters))
 
         self.hooks.emit(HookName.BEFORE_CANONICAL, context, {})
         canonical = rank_canonicals(clusters, fingerprints, edges, low_pass, self.config.canonical)
         self.hooks.emit(HookName.AFTER_CANONICAL, context, {"decisions": len(canonical)})
+        logger.debug("Canonical ranking complete: %s cluster decisions", len(canonical))
 
         self.hooks.emit(HookName.BEFORE_ACTION, context, {})
         routing = self._build_routing(entities, low_pass, canonical)
         self.hooks.emit(HookName.AFTER_ACTION, context, {"routing": len(routing)})
+        logger.debug("Routing decisions generated: %s", len(routing))
 
         report = EngineReport(
             processed_entities=len(entities),
@@ -143,6 +157,8 @@ class CarapaceEngine:
                 report=report,
                 embedding_model=self.embedding_provider.model_id(),
             )
+            logger.debug("Run persisted via storage backend")
+        logger.info("Scan completed: processed=%s clusters=%s", len(entities), len(clusters))
         return report
 
     def _build_routing(

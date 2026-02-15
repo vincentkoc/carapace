@@ -65,6 +65,8 @@ class SourceEntity(BaseModel):
     provider: str = "github"
     repo: str
     kind: EntityKind
+    state: str = "open"
+    is_draft: bool = False
     number: int | None = None
     title: str
     body: str = ""

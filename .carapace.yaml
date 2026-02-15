@@ -27,6 +27,15 @@ action:
   add_comments: true
   queue_on_suppress: true
 
+ingest:
+  include_closed: false
+  include_drafts: false
+  include_issues: true
+  page_size: 100
+  resume: true
+  enrich_pr_details: false
+  enrich_issue_comments: false
+
 storage:
   backend: sqlite
   sqlite_path: .carapace/carapace.db
