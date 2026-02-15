@@ -162,3 +162,29 @@ def test_compute_similarity_edges_with_stats() -> None:
     assert stats.entities_total == 2
     assert stats.unique_pairs_scored >= 1
     assert stats.edges_emitted == 1
+
+
+def test_unstructured_pairs_require_very_high_semantic_and_lexical_match() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True)
+    a = _fp(
+        "issue:1",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["summary", "steps", "reproduce", "expected", "behavior"],
+    )
+    b = _fp(
+        "issue:2",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[0.0, 1.0],
+        tokens=["summary", "steps", "reproduce", "expected", "behavior"],
+    )
+    edges = compute_similarity_edges({"issue:1": a, "issue:2": b}, cfg)
+    assert edges == []

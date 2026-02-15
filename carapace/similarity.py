@@ -253,8 +253,16 @@ def score_pair(
 
 
 def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConfig) -> EdgeTier | None:
-    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score or breakdown.minhash >= cfg.strong_minhash_min or breakdown.winnow >= cfg.strong_winnow_min:
+    has_structure = (breakdown.structure > 0.0) or (breakdown.lineage > 0.0)
+    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score or (has_structure and breakdown.minhash >= cfg.strong_minhash_min) or (has_structure and breakdown.winnow >= cfg.strong_winnow_min):
         return EdgeTier.STRONG
+
+    # For unstructured entities (e.g., issue templates), require very high semantic + lexical agreement.
+    if not has_structure:
+        if breakdown.semantic >= cfg.unstructured_semantic_min and breakdown.minhash >= cfg.unstructured_minhash_min and breakdown.winnow >= cfg.unstructured_winnow_min:
+            return EdgeTier.WEAK
+        return None
+
     if score >= cfg.min_score and (
         breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min or breakdown.minhash >= cfg.weak_minhash_min or breakdown.simhash >= cfg.weak_simhash_min or breakdown.winnow >= cfg.weak_winnow_min
     ):

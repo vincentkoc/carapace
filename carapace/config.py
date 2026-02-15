@@ -51,6 +51,9 @@ class SimilarityConfig(BaseModel):
     weak_winnow_min: float = 0.20
     strong_minhash_min: float = 0.85
     strong_winnow_min: float = 0.55
+    unstructured_semantic_min: float = 0.96
+    unstructured_minhash_min: float = 0.90
+    unstructured_winnow_min: float = 0.85
     minhash_num_perm: int = 64
     minhash_bands: int = 8
     minhash_shingle_k: int = 3

@@ -295,11 +295,12 @@ class CarapaceEngine:
         canonical: list,
     ) -> list[RoutingDecision]:
         labels_cfg = self.config.labels
-        decision_map: dict[str, tuple[DecisionState, str | None]] = {}
+        decision_map: dict[str, tuple[DecisionState, str | None, int]] = {}
 
         for cluster_decision in canonical:
+            cluster_size = len(cluster_decision.member_decisions)
             for member in cluster_decision.member_decisions:
-                decision_map[member.entity_id] = (member.state, member.duplicate_of)
+                decision_map[member.entity_id] = (member.state, member.duplicate_of, cluster_size)
 
         routing: list[RoutingDecision] = []
         for entity in entities:
@@ -315,17 +316,19 @@ class CarapaceEngine:
                     queue = "quarantine"
             else:
                 labels.append(labels_cfg.ready_human)
-                state, duplicate_of = decision_map.get(entity.id, (DecisionState.RELATED, None))
+                state, duplicate_of, cluster_size = decision_map.get(entity.id, (DecisionState.RELATED, None, 1))
                 if state == DecisionState.CANONICAL:
-                    labels.append(labels_cfg.canonical)
-                    if self.config.action.add_comments:
+                    if cluster_size > 1:
+                        labels.append(labels_cfg.canonical)
+                    if self.config.action.add_comments and cluster_size > 1:
                         comment = "Marked as canonical candidate for this similarity cluster."
                 elif state == DecisionState.DUPLICATE:
                     labels.append(labels_cfg.duplicate)
                     if self.config.action.add_comments and duplicate_of:
                         comment = f"Potential duplicate of {duplicate_of}; routed for maintainer confirmation."
                 else:
-                    labels.append(labels_cfg.related)
+                    if cluster_size > 1:
+                        labels.append(labels_cfg.related)
 
             routing.append(RoutingDecision(entity_id=entity.id, labels=sorted(set(labels)), queue_key=queue, comment=comment))
 

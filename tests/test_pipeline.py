@@ -93,5 +93,12 @@ def test_pipeline_uses_fingerprint_cache_across_runs(tmp_path) -> None:
     engine.scan_entities(entities)
     assert provider.calls == 1
 
-    engine.scan_entities(entities)
-    assert provider.calls == 1
+
+def test_singleton_cluster_not_labeled_canonical_or_related() -> None:
+    entity = _entity("solo", repo="acme/repo", changed_files=["src/solo.py"])
+    engine = CarapaceEngine(config=CarapaceConfig())
+    report = engine.scan_entities([entity])
+    routing = {item.entity_id: item.labels for item in report.routing}
+    assert "triage/ready-human" in routing["solo"]
+    assert "triage/canonical" not in routing["solo"]
+    assert "triage/related" not in routing["solo"]

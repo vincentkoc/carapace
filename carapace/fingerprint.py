@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections.abc import Iterable
 
-from carapace.models import Fingerprint, SourceEntity
+from carapace.models import EntityKind, Fingerprint, SourceEntity
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 
@@ -20,6 +20,44 @@ def _module_bucket(path: str, depth: int = 2) -> str:
     if not parts:
         return "root/*"
     return "/".join(parts[:depth]) + "/*"
+
+
+_ISSUE_TEMPLATE_PREFIXES = (
+    "## summary",
+    "## steps to reproduce",
+    "## expected behavior",
+    "## actual behavior",
+    "## proposed solution",
+    "## additional context",
+)
+
+_ISSUE_TEMPLATE_LINES = {
+    "what went wrong?",
+    "what did you expect to happen?",
+    "what actually happened?",
+    "1.",
+    "2.",
+    "3.",
+}
+
+
+def _normalize_body_for_tokens(entity: SourceEntity) -> str:
+    text = entity.body or ""
+    if entity.kind != EntityKind.ISSUE:
+        return text
+
+    kept: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if not line:
+            continue
+        if any(lower.startswith(prefix) for prefix in _ISSUE_TEMPLATE_PREFIXES):
+            continue
+        if lower in _ISSUE_TEMPLATE_LINES:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _hunk_signature(file_path: str, context: str, added: Iterable[str], removed: Iterable[str]) -> str:
@@ -38,7 +76,7 @@ def _hunk_signature(file_path: str, context: str, added: Iterable[str], removed:
 
 def build_fingerprint(entity: SourceEntity, embedding: list[float]) -> Fingerprint:
     title_tokens = _tokens(entity.title)
-    body_tokens = _tokens(entity.body)
+    body_tokens = _tokens(_normalize_body_for_tokens(entity))
     modules = sorted({_module_bucket(path) for path in entity.changed_files})
 
     reviewer_score = 0.0
