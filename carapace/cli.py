@@ -256,6 +256,8 @@ def _run_process_stored(args: argparse.Namespace) -> int:
         )
 
     quality = storage.ingest_quality_stats(args.repo)
+    pr_quality = storage.ingest_quality_stats(args.repo, kind="pr")
+    issue_quality = storage.ingest_quality_stats(args.repo, kind="issue")
     logger.info(
         "Ingest quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s enriched_rows=%s",
         quality["total"],
@@ -263,6 +265,22 @@ def _run_process_stored(args: argparse.Namespace) -> int:
         quality["missing_diff_hunks"],
         quality["ci_unknown"],
         quality["enriched_rows"],
+    )
+    logger.info(
+        "PR quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s enriched_rows=%s",
+        pr_quality["total"],
+        pr_quality["missing_changed_files"],
+        pr_quality["missing_diff_hunks"],
+        pr_quality["ci_unknown"],
+        pr_quality["enriched_rows"],
+    )
+    logger.info(
+        "Issue quality stats: total=%s missing_changed_files=%s missing_diff_hunks=%s ci_unknown=%s enriched_rows=%s",
+        issue_quality["total"],
+        issue_quality["missing_changed_files"],
+        issue_quality["missing_diff_hunks"],
+        issue_quality["ci_unknown"],
+        issue_quality["enriched_rows"],
     )
 
     entities = storage.load_ingested_entities(

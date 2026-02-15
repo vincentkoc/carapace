@@ -1,5 +1,5 @@
 from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector, _extract_score_from_text
-from carapace.models import CIStatus, EntityKind
+from carapace.models import CIStatus, EntityKind, SourceEntity
 
 
 class FakeGhClient:
@@ -115,6 +115,46 @@ def test_github_connector_includes_issues_and_skips_issue_pr_mirror() -> None:
     assert "pr:1" in ids
     assert "issue:77" in ids
     assert "issue:88" not in ids
+
+
+def test_enrich_entity_minimal_uses_files_fast_path() -> None:
+    class FastPathClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_page(self, endpoint: str, *, page: int, per_page: int = 100):
+            _ = (page, per_page)
+            self.calls.append(("get_page", endpoint))
+            if endpoint == "pulls/1/files":
+                return [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-old\n+new"}]
+            return []
+
+        def _api_json(self, endpoint: str, method: str = "GET", body=None):
+            _ = (method, body)
+            self.calls.append(("_api_json", endpoint))
+            return {}
+
+    connector = GithubGhSourceConnector(repo="openclaw/openclaw")
+    fast_client = FastPathClient()
+    connector.client = fast_client  # type: ignore[assignment]
+
+    pr_entity = SourceEntity.model_validate(
+        {
+            "id": "pr:1",
+            "repo": "openclaw/openclaw",
+            "kind": "pr",
+            "number": 1,
+            "state": "open",
+            "title": "t",
+            "author": "alice",
+            "changed_files": [],
+        }
+    )
+    enriched = connector.enrich_entity(pr_entity, mode="minimal")
+    assert enriched.changed_files == ["src/a.py"]
+    assert len(enriched.diff_hunks) == 1
+    assert ("get_page", "pulls/1/files") in fast_client.calls
+    assert ("_api_json", "pulls/1") not in fast_client.calls
 
 
 class FakeSinkClient:

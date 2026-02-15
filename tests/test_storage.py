@@ -196,3 +196,41 @@ def test_get_enrichment_watermarks_can_filter_by_kind(tmp_path: Path) -> None:
 
     pr_watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
     assert set(pr_watermarks.keys()) == {"pr:10"}
+
+
+def test_ingest_quality_stats_can_filter_by_kind(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity.model_validate(
+                {
+                    "id": "pr:1",
+                    "repo": "acme/repo",
+                    "kind": EntityKind.PR,
+                    "title": "PR",
+                    "author": "alice",
+                    "state": "open",
+                    "changed_files": [],
+                }
+            ),
+            SourceEntity.model_validate(
+                {
+                    "id": "issue:2",
+                    "repo": "acme/repo",
+                    "kind": EntityKind.ISSUE,
+                    "title": "Issue",
+                    "author": "bob",
+                    "state": "open",
+                }
+            ),
+        ],
+    )
+
+    all_quality = storage.ingest_quality_stats("acme/repo")
+    pr_quality = storage.ingest_quality_stats("acme/repo", kind="pr")
+    issue_quality = storage.ingest_quality_stats("acme/repo", kind="issue")
+    assert all_quality["total"] == 2
+    assert pr_quality["total"] == 1
+    assert issue_quality["total"] == 1

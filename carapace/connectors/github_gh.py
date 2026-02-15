@@ -248,35 +248,22 @@ class GithubGhSourceConnector(SourceConnector):
     ) -> SourceEntity:
         if entity.kind != EntityKind.PR or entity.number is None:
             return entity
+        if mode == "minimal":
+            # Fast path: avoid fetching pull metadata and only pull first page of changed files.
+            files_payload = self.client.get_page(f"pulls/{entity.number}/files", page=1, per_page=100)
+            files = [GithubFile.model_validate(item) for item in files_payload]
+            changed_files = [item.filename for item in files]
+            diff_hunks = _parse_diff_hunks(files)
+            return entity.model_copy(update={"changed_files": changed_files, "diff_hunks": diff_hunks})
+
         payload = self.client._api_json(f"pulls/{entity.number}")
         pull = GithubPull.model_validate(payload)
-        if pull.state != "open":
-            # Closed/reopened transitions should be reflected even if no further enrichment is done.
-            return self._normalize_pull(
-                pull,
-                enrich_files=False,
-                enrich_reviews=False,
-                enrich_ci=False,
-                enrich_comments=False,
-            )
-
-        if mode == "full":
-            return self._normalize_pull(
-                pull,
-                enrich_files=True,
-                enrich_reviews=True,
-                enrich_ci=True,
-                enrich_comments=include_comments,
-            )
-
-        # Minimal mode: changed files + hunks only; skip reviews/CI/comments for speed.
         return self._normalize_pull(
             pull,
             enrich_files=True,
-            enrich_reviews=False,
-            enrich_ci=False,
-            enrich_comments=False,
-            file_pages_limit=1,
+            enrich_reviews=True,
+            enrich_ci=True,
+            enrich_comments=include_comments,
         )
 
     def get_diff_or_change_set(self, entity_id: str) -> dict:

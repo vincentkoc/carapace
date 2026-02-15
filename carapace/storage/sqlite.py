@@ -395,10 +395,15 @@ class SQLiteStorage:
             )
             conn.commit()
 
-    def ingest_quality_stats(self, repo: str) -> dict[str, int]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
+    def ingest_quality_stats(self, repo: str, kind: str | None = None) -> dict[str, int]:
+        predicates = ["repo = ?"]
+        params: list[object] = [repo]
+        if kind is not None:
+            predicates.append("kind = ?")
+            params.append(kind)
+
+        sql = (
+            """
                 SELECT
                   COUNT(*) AS total,
                   SUM(CASE WHEN COALESCE(json_array_length(json_extract(payload_json, '$.changed_files')), 0) = 0 THEN 1 ELSE 0 END) AS missing_changed_files,
@@ -406,10 +411,11 @@ class SQLiteStorage:
                   SUM(CASE WHEN COALESCE(json_extract(payload_json, '$.ci_status'), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS ci_unknown,
                   SUM(CASE WHEN enriched_for_updated_at IS NOT NULL THEN 1 ELSE 0 END) AS enriched_rows
                 FROM ingest_entities
-                WHERE repo = ?
-                """,
-                (repo,),
-            ).fetchone()
+                WHERE """
+            + " AND ".join(predicates)
+        )
+        with self._connect() as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
         if row is None:
             return {
                 "total": 0,
