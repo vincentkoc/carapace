@@ -51,6 +51,32 @@ def test_candidate_retrieval_uses_module_issue_and_file_indices() -> None:
     assert set(candidates) == {"b", "c"}
 
 
+def test_candidate_retrieval_skips_hot_file_buckets() -> None:
+    cfg = SimilarityConfig(max_file_bucket_size=2)
+    fps = {
+        "a": _fp("a", files=["src/hot.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "b": _fp("b", files=["src/hot.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "c": _fp("c", files=["src/hot.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+    }
+    idx = build_candidate_index(fps, cfg)
+    candidates = retrieve_candidates("a", fps["a"], idx, cfg)
+    # Module index still contributes by default, but file-bucket contribution is skipped.
+    assert set(candidates) == {"b", "c"}
+
+
+def test_candidate_retrieval_skips_hot_module_buckets() -> None:
+    cfg = SimilarityConfig(max_module_bucket_size=2, max_file_bucket_size=10, use_advanced_algorithms=False)
+    fps = {
+        "a": _fp("a", files=["src/a.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "b": _fp("b", files=["src/b.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "c": _fp("c", files=["src/c.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+    }
+    idx = build_candidate_index(fps, cfg)
+    candidates = retrieve_candidates("a", fps["a"], idx, cfg)
+    # Distinct files and hot module bucket means no candidates remain.
+    assert candidates == []
+
+
 def test_score_pair_prefers_lineage_and_penalizes_size() -> None:
     cfg = SimilarityConfig()
     a = _fp(

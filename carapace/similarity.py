@@ -230,13 +230,17 @@ def retrieve_candidates(
                 candidate_votes[candidate] += 1
 
     for module in fp.module_buckets:
-        bump(idx.by_module.get(module, set()))
+        bucket = idx.by_module.get(module, set())
+        if len(bucket) <= cfg.max_module_bucket_size:
+            bump(bucket)
     for issue in fp.linked_issues:
         bump(idx.by_issue.get(issue, set()))
     for issue in fp.soft_linked_issues:
         bump(idx.by_soft_issue.get(issue, set()))
     for path in fp.changed_files:
-        bump(idx.by_file.get(path, set()))
+        bucket = idx.by_file.get(path, set())
+        if len(bucket) <= cfg.max_file_bucket_size:
+            bump(bucket)
 
     use_advanced = cfg.use_advanced_algorithms and (_kind(entity_id) != "issue" or cfg.advanced_for_issues)
     if use_advanced:
