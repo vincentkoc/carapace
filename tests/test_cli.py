@@ -195,3 +195,79 @@ storage:
     )
     assert exit_code == 0
     assert (out_dir / "triage_report.md").exists()
+
+
+def test_process_stored_enrich_failure_does_not_set_watermark(tmp_path: Path, monkeypatch) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    out_dir = tmp_path / "out"
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="Needs enrich",
+                body="",
+                author="alice",
+                changed_files=[],
+                ci_status=CIStatus.UNKNOWN,
+            )
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        """
+storage:
+  backend: sqlite
+  sqlite_path: .carapace/carapace.db
+  persist_runs: false
+"""
+    )
+
+    class FailingSource:
+        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+            _ = (repo, gh_bin)
+
+        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
+            _ = (include_comments, mode)
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "GithubGhSourceConnector", FailingSource)
+
+    exit_code = cli.main(
+        [
+            "process-stored",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--output-dir",
+            str(out_dir),
+            "--skip-repo-path-check",
+            "--enrich-missing",
+            "--enrich-mode",
+            "minimal",
+            "--enrich-workers",
+            "1",
+            "--enrich-flush-every",
+            "1",
+            "--enrich-progress-every",
+            "1",
+            "--enrich-heartbeat-seconds",
+            "1",
+        ]
+    )
+    assert exit_code == 0
+
+    watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
+    assert watermarks["pr:1"]["enriched_for_updated_at"] is None
