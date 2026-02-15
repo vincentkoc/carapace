@@ -91,6 +91,7 @@ class GithubGhClient:
         items: list[dict[str, Any]] = []
         page = 1
         while True:
+            # TODO: Add explicit GitHub rate-limit backoff/retry strategy for long-running service mode.
             query = f"{endpoint}{'&' if '?' in endpoint else '?'}per_page={per_page}&page={page}"
             payload = self._api_json(query)
             if not isinstance(payload, list) or not payload:
@@ -302,7 +303,7 @@ class GithubGhSinkConnector(SinkConnector):
         self.client._api_json(f"issues/{number}/comments", method="POST", body={"body": body})
 
     def set_status(self, entity_id: str, state: str, context: str) -> None:
-        # Optional future implementation; no-op for v1.
+        # TODO: Implement GitHub checks/status publishing so Carapace appears directly in PR check-runs.
         _ = (entity_id, state, context)
 
     def route_to_queue(self, entity_id: str, queue_key: str) -> None:

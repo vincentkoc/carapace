@@ -1,0 +1,111 @@
+from carapace.config import SimilarityConfig
+from carapace.models import Fingerprint
+from carapace.similarity import build_candidate_index, compute_similarity_edges, retrieve_candidates, score_pair
+
+
+def _fp(
+    entity_id: str,
+    *,
+    files: list[str],
+    modules: list[str],
+    issues: list[str],
+    patch_ids: list[str],
+    hunks: list[str],
+    embedding: list[float],
+    additions: int = 10,
+    deletions: int = 2,
+) -> Fingerprint:
+    return Fingerprint(
+        entity_id=entity_id,
+        changed_files=files,
+        module_buckets=modules,
+        linked_issues=issues,
+        patch_ids=patch_ids,
+        hunk_signatures=hunks,
+        embedding=embedding,
+        additions=additions,
+        deletions=deletions,
+    )
+
+
+def test_candidate_retrieval_uses_module_issue_and_file_indices() -> None:
+    fps = {
+        "a": _fp("a", files=["src/a.py"], modules=["src/*"], issues=["12"], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "b": _fp("b", files=["src/b.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "c": _fp("c", files=["docs/a.md"], modules=["docs/*"], issues=["12"], patch_ids=[], hunks=[], embedding=[0, 1]),
+    }
+    idx = build_candidate_index(fps)
+
+    candidates = retrieve_candidates("a", fps["a"], idx, top_k=10)
+    assert set(candidates) == {"b", "c"}
+
+
+def test_score_pair_prefers_lineage_and_penalizes_size() -> None:
+    cfg = SimilarityConfig()
+    a = _fp(
+        "a",
+        files=["src/cache.py"],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=["p1"],
+        hunks=["h1"],
+        embedding=[1.0, 0.0],
+        additions=10,
+        deletions=10,
+    )
+    b = _fp(
+        "b",
+        files=["src/cache.py"],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=["p1"],
+        hunks=["h1"],
+        embedding=[1.0, 0.0],
+        additions=100,
+        deletions=100,
+    )
+
+    total, breakdown = score_pair(a, b, cfg)
+    assert breakdown.lineage == 1.0
+    assert breakdown.structure > 0.0
+    assert breakdown.size_penalty > 0.0
+    assert total > 0.5
+
+
+def test_compute_similarity_edges_creates_single_strong_edge() -> None:
+    cfg = SimilarityConfig()
+    fps = {
+        "a": _fp(
+            "a",
+            files=["src/cache.py"],
+            modules=["src/*"],
+            issues=["1"],
+            patch_ids=["p1"],
+            hunks=["h1"],
+            embedding=[1.0, 0.0, 0.0],
+        ),
+        "b": _fp(
+            "b",
+            files=["src/cache.py"],
+            modules=["src/*"],
+            issues=["1"],
+            patch_ids=["p1"],
+            hunks=["h1"],
+            embedding=[1.0, 0.0, 0.0],
+        ),
+        "c": _fp(
+            "c",
+            files=["docs/guide.md"],
+            modules=["docs/*"],
+            issues=[],
+            patch_ids=["p2"],
+            hunks=["h2"],
+            embedding=[0.0, 1.0, 0.0],
+        ),
+    }
+
+    edges = compute_similarity_edges(fps, cfg)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert {edge.entity_a, edge.entity_b} == {"a", "b"}
+    assert edge.tier.value == "strong"

@@ -1,4 +1,4 @@
-from carapace.connectors.github_gh import GithubGhSourceConnector, _extract_score_from_text
+from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector, _extract_score_from_text
 from carapace.models import CIStatus, EntityKind
 
 
@@ -46,7 +46,31 @@ class FakeGhClient:
             ]
 
         if endpoint.startswith("issues?state=open"):
-            return []
+            return [
+                {
+                    "id": 2001,
+                    "number": 77,
+                    "title": "Parser bug",
+                    "body": "Fix parser edge case",
+                    "user": {"login": "reporter", "type": "User"},
+                    "labels": [{"name": "bug"}],
+                    "created_at": "2026-02-13T10:00:00Z",
+                    "updated_at": "2026-02-14T10:00:00Z",
+                    "author_association": "NONE",
+                },
+                {
+                    "id": 2002,
+                    "number": 88,
+                    "title": "PR mirror",
+                    "body": "",
+                    "user": {"login": "dev2", "type": "User"},
+                    "labels": [],
+                    "created_at": "2026-02-13T10:00:00Z",
+                    "updated_at": "2026-02-14T10:00:00Z",
+                    "author_association": "NONE",
+                    "pull_request": {"url": "https://api.github.com/repos/x/y/pulls/88"},
+                },
+            ]
 
         return []
 
@@ -80,3 +104,45 @@ def test_extract_score_from_text() -> None:
     assert _extract_score_from_text("quality 72%") == 0.72
     assert _extract_score_from_text("result 85/100") == 0.85
     assert _extract_score_from_text("no score") == 0.5
+
+
+def test_github_connector_includes_issues_and_skips_issue_pr_mirror() -> None:
+    connector = GithubGhSourceConnector(repo="openclaw/openclaw")
+    connector.client = FakeGhClient()  # type: ignore[assignment]
+
+    entities = connector.fetch_open_entities(max_prs=1, include_issues=True, max_issues=20)
+    ids = {e.id for e in entities}
+    assert "pr:1" in ids
+    assert "issue:77" in ids
+    assert "issue:88" not in ids
+
+
+class FakeSinkClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def _api_json(self, endpoint: str, method: str = "GET", body=None):
+        self.calls.append((endpoint, method, body))
+        return {}
+
+
+def test_github_sink_dry_run_no_api_calls() -> None:
+    sink = GithubGhSinkConnector(repo="openclaw/openclaw", entity_number_resolver=lambda _: 12, dry_run=True)
+    fake_client = FakeSinkClient()
+    sink.client = fake_client  # type: ignore[assignment]
+
+    sink.apply_labels("pr:12", ["triage/duplicate"])
+    sink.post_comment("pr:12", "hello")
+    assert fake_client.calls == []
+
+
+def test_github_sink_live_calls_api() -> None:
+    sink = GithubGhSinkConnector(repo="openclaw/openclaw", entity_number_resolver=lambda _: 12, dry_run=False)
+    fake_client = FakeSinkClient()
+    sink.client = fake_client  # type: ignore[assignment]
+
+    sink.apply_labels("pr:12", ["triage/duplicate"])
+    sink.post_comment("pr:12", "hello")
+
+    assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) in fake_client.calls
+    assert ("issues/12/comments", "POST", {"body": "hello"}) in fake_client.calls
