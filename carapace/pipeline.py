@@ -139,11 +139,13 @@ class CarapaceEngine:
             fp_start = time.perf_counter()
             self.hooks.emit(HookName.BEFORE_FINGERPRINT, context, {})
             model_id = self.embedding_provider.model_id()
+            requires_diff_embedding = self.config.similarity.semantic_diff_share > 0.0
 
             by_repo: dict[str, list[SourceEntity]] = {}
             for entity in active_entities:
                 by_repo.setdefault(entity.repo, []).append(entity)
 
+            stale_cache_ids: set[str] = set()
             if self.storage:
                 for repo, repo_entities in by_repo.items():
                     cached = self.storage.load_fingerprint_cache(
@@ -151,15 +153,25 @@ class CarapaceEngine:
                         repo_entities,
                         model_id=model_id,
                     )
-                    fingerprints.update(cached)
+                    for entity in repo_entities:
+                        fp = cached.get(entity.id)
+                        if fp is None:
+                            continue
+                        has_text_embedding = bool(fp.text_embedding or fp.embedding)
+                        has_diff_embedding = bool(fp.diff_embedding)
+                        if has_text_embedding and (not requires_diff_embedding or has_diff_embedding):
+                            fingerprints[entity.id] = fp
+                        else:
+                            stale_cache_ids.add(entity.id)
             fingerprint_cache_hits = len(fingerprints)
 
-            to_compute = [entity for entity in active_entities if entity.id not in fingerprints]
+            to_compute = [entity for entity in active_entities if entity.id not in fingerprints or entity.id in stale_cache_ids]
             fingerprint_cache_misses = len(to_compute)
             logger.info(
-                "Fingerprint cache: hits=%s misses=%s",
+                "Fingerprint cache: hits=%s misses=%s stale=%s",
                 len(fingerprints),
                 len(to_compute),
+                len(stale_cache_ids),
             )
 
             if to_compute:
