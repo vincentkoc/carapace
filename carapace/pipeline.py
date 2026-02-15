@@ -144,7 +144,7 @@ class CarapaceEngine:
             for entity in active_entities:
                 by_repo.setdefault(entity.repo, []).append(entity)
 
-            if self.storage and hasattr(self.storage, "load_fingerprint_cache"):
+            if self.storage:
                 for repo, repo_entities in by_repo.items():
                     cached = self.storage.load_fingerprint_cache(
                         repo,
@@ -168,7 +168,7 @@ class CarapaceEngine:
                 for entity, vector in zip(to_compute, vectors):
                     fingerprints[entity.id] = build_fingerprint(entity, vector)
 
-                if self.storage and hasattr(self.storage, "upsert_fingerprint_cache"):
+                if self.storage:
                     computed_ids = {item.id for item in to_compute}
                     for repo, repo_entities in by_repo.items():
                         self.storage.upsert_fingerprint_cache(
