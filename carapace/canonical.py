@@ -208,7 +208,7 @@ def rank_canonicals(
             for idx, decision in enumerate(member_decisions):
                 # Only escalate to tie-break for non-duplicate runner-up.
                 if decision.entity_id == ranked[1][0] and decision.state == DecisionState.RELATED:
-                    _, _, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
+                    file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
                         edge_table, decision.entity_id, canonical
                     )
                     lineage_overlap = _lineage_overlap(edge_table, decision.entity_id, canonical)
@@ -219,6 +219,16 @@ def rank_canonicals(
                         hard_link_overlap=hard_link_overlap,
                         cfg=cfg,
                     ):
+                        continue
+                    tie_break_evidence = (
+                        hard_link_overlap >= cfg.tie_break_hard_link_min
+                        or hunk_overlap >= cfg.tie_break_hunk_overlap_min
+                        or (
+                            file_overlap >= cfg.tie_break_file_overlap_min
+                            and semantic_text >= cfg.tie_break_semantic_text_min
+                        )
+                    )
+                    if decision.score < cfg.tie_break_min_similarity or not tie_break_evidence:
                         continue
                     member_decisions[idx] = MemberDecision(
                         entity_id=decision.entity_id,

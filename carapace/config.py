@@ -111,6 +111,11 @@ class CanonicalConfig(BaseModel):
     duplicate_title_mismatch_semantic_text_max: float = 0.72
     duplicate_title_mismatch_hard_link_override_min: float = 1.0
     tie_margin: float = 0.10
+    tie_break_min_similarity: float = 0.25
+    tie_break_hard_link_min: float = 0.50
+    tie_break_hunk_overlap_min: float = 0.20
+    tie_break_file_overlap_min: float = 0.80
+    tie_break_semantic_text_min: float = 0.75
 
 
 class LabelsConfig(BaseModel):
