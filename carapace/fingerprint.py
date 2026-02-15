@@ -117,6 +117,7 @@ def build_fingerprint(
         changed_files=entity.changed_files,
         hunk_signatures=hunk_signatures,
         linked_issues=entity.linked_issues,
+        soft_linked_issues=entity.soft_linked_issues,
         commits=entity.commits,
         patch_ids=entity.patch_ids,
         additions=entity.additions,

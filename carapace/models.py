@@ -77,6 +77,7 @@ class SourceEntity(BaseModel):
     base_branch: str | None = None
     head_branch: str | None = None
     linked_issues: list[str] = Field(default_factory=list)
+    soft_linked_issues: list[str] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
     diff_hunks: list[DiffHunk] = Field(default_factory=list)
     commits: list[str] = Field(default_factory=list)
@@ -105,6 +106,7 @@ class Fingerprint(BaseModel):
     changed_files: list[str] = Field(default_factory=list)
     hunk_signatures: list[str] = Field(default_factory=list)
     linked_issues: list[str] = Field(default_factory=list)
+    soft_linked_issues: list[str] = Field(default_factory=list)
     commits: list[str] = Field(default_factory=list)
     patch_ids: list[str] = Field(default_factory=list)
     additions: int = 0
@@ -131,6 +133,10 @@ class SimilarityBreakdown(BaseModel):
 
     lineage: float
     structure: float
+    file_overlap: float = 0.0
+    hunk_overlap: float = 0.0
+    hard_link_overlap: float = 0.0
+    soft_link_overlap: float = 0.0
     semantic: float
     semantic_text: float = 0.0
     semantic_diff: float = 0.0

@@ -46,7 +46,7 @@ class FakeGhClient:
         if endpoint == "issues/1/comments":
             return [
                 {
-                    "body": "CodeRabbit score: 82%\nGood improvement overall",
+                    "body": "CodeRabbit score: 82%\nGood improvement overall\nRelated #88",
                     "user": {"login": "coderabbitai[bot]", "type": "Bot"},
                 }
             ]
@@ -57,7 +57,7 @@ class FakeGhClient:
                     "id": 2001,
                     "number": 77,
                     "title": "Parser bug",
-                    "body": "Fix parser edge case",
+                    "body": "Fix parser edge case related #99",
                     "user": {"login": "reporter", "type": "User"},
                     "labels": [{"name": "bug"}],
                     "created_at": "2026-02-13T10:00:00Z",
@@ -97,6 +97,7 @@ def test_github_connector_normalizes_pr() -> None:
     assert pr.kind == EntityKind.PR
     assert pr.id == "pr:1"
     assert pr.linked_issues == ["77"]
+    assert pr.soft_linked_issues == ["88"]
     assert pr.ci_status == CIStatus.PASS
     assert pr.approvals == 1
     assert pr.changed_files == ["src/cache.py"]
@@ -123,6 +124,8 @@ def test_github_connector_includes_issues_and_skips_issue_pr_mirror() -> None:
     assert "pr:1" in ids
     assert "issue:77" in ids
     assert "issue:88" not in ids
+    issue = [e for e in entities if e.id == "issue:77"][0]
+    assert issue.soft_linked_issues == ["99"]
 
 
 def test_enrich_entity_minimal_uses_files_fast_path() -> None:

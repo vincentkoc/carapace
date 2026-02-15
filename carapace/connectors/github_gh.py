@@ -16,7 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from carapace.connectors.base import SinkConnector, SourceConnector
 from carapace.models import CIStatus, DiffHunk, EntityKind, ExternalReviewSignal, SourceEntity
 
-_ISSUE_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#(\d+)", re.IGNORECASE)
+_HARD_ISSUE_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#(\d+)", re.IGNORECASE)
+_SOFT_ISSUE_RE = re.compile(r"#(\d+)")
+_GH_ENTITY_URL_RE = re.compile(r"github\\.com/[^\\s/]+/[^\\s/]+/(?:issues|pull)/(\\d+)", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -364,7 +366,13 @@ class GithubGhSourceConnector(SourceConnector):
             comments = [GithubComment.model_validate(item) for item in comments_payload]
 
         labels = [label.name for label in pull.labels]
-        linked_issues = _extract_linked_issues(pull.body or "")
+        linked_issues = _extract_hard_linked_issues(pull.body or "")
+        soft_linked_issues = _extract_soft_linked_issues(pull.body or "", linked_issues)
+        if comments:
+            soft_linked_issues = _merge_issue_refs(
+                soft_linked_issues,
+                _extract_soft_links_from_comments(comments, linked_issues),
+            )
         external_reviews = _extract_external_review_signals(comments)
 
         return SourceEntity(
@@ -384,6 +392,7 @@ class GithubGhSourceConnector(SourceConnector):
             base_branch=pull.base.get("ref"),
             head_branch=pull.head.get("ref"),
             linked_issues=linked_issues,
+            soft_linked_issues=soft_linked_issues,
             changed_files=changed_files,
             diff_hunks=diff_hunks,
             commits=commits,
@@ -401,6 +410,8 @@ class GithubGhSourceConnector(SourceConnector):
 
     def _normalize_issue(self, issue: GithubIssue) -> SourceEntity:
         labels = [label.name for label in issue.labels]
+        linked_issues = _extract_hard_linked_issues(issue.body or "")
+        soft_linked_issues = _extract_soft_linked_issues(issue.body or "", linked_issues)
         return SourceEntity(
             id=f"issue:{issue.number}",
             provider="github",
@@ -414,7 +425,8 @@ class GithubGhSourceConnector(SourceConnector):
             author=issue.user.login,
             author_association=issue.author_association,
             is_bot=(issue.user.type or "").lower() == "bot" or issue.user.login.endswith("[bot]"),
-            linked_issues=_extract_linked_issues(issue.body or ""),
+            linked_issues=linked_issues,
+            soft_linked_issues=soft_linked_issues,
             created_at=issue.created_at.astimezone(UTC),
             updated_at=issue.updated_at.astimezone(UTC),
             metadata={"source": "gh"},
@@ -477,8 +489,19 @@ def _normalize_ci_status(state: str | None) -> CIStatus:
     return CIStatus.UNKNOWN
 
 
-def _extract_linked_issues(text: str) -> list[str]:
-    return sorted({match.group(1) for match in _ISSUE_RE.finditer(text)})
+def _merge_issue_refs(first: list[str], second: list[str]) -> list[str]:
+    return sorted(set(first) | set(second))
+
+
+def _extract_hard_linked_issues(text: str) -> list[str]:
+    return sorted({match.group(1) for match in _HARD_ISSUE_RE.finditer(text)})
+
+
+def _extract_soft_linked_issues(text: str, hard_links: list[str] | None = None) -> list[str]:
+    hard_set = set(hard_links or [])
+    refs = {match.group(1) for match in _SOFT_ISSUE_RE.finditer(text)}
+    refs.update(match.group(1) for match in _GH_ENTITY_URL_RE.finditer(text))
+    return sorted(ref for ref in refs if ref not in hard_set)
 
 
 def _parse_diff_hunks(files: list[GithubFile]) -> list[DiffHunk]:
@@ -581,6 +604,16 @@ def _extract_external_review_signals(comments: list[GithubComment]) -> list[Exte
         )
 
     return signals
+
+
+def _extract_soft_links_from_comments(comments: list[GithubComment], hard_links: list[str] | None = None) -> list[str]:
+    merged: list[str] = []
+    for comment in comments:
+        body = (comment.body or "").strip()
+        if not body:
+            continue
+        merged = _merge_issue_refs(merged, _extract_soft_linked_issues(body, hard_links))
+    return merged
 
 
 def _extract_score_from_text(body: str) -> float:

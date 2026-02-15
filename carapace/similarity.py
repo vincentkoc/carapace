@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 class CandidateIndex:
     by_module: dict[str, set[str]]
     by_issue: dict[str, set[str]]
+    by_soft_issue: dict[str, set[str]]
     by_file: dict[str, set[str]]
     by_lsh_band: dict[tuple[int, tuple[int, ...]], set[str]]
     by_simhash_chunk: dict[tuple[int, int], set[str]]
@@ -73,9 +74,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def _material_tokens(fp: Fingerprint) -> list[str]:
     tokens: list[str] = []
     tokens.extend(fp.tokens)
-    tokens.extend(fp.changed_files)
-    tokens.extend(fp.module_buckets)
     tokens.extend(fp.linked_issues)
+    tokens.extend(fp.soft_linked_issues)
     tokens.extend(fp.hunk_signatures)
     return [token.lower() for token in tokens if token]
 
@@ -83,6 +83,7 @@ def _material_tokens(fp: Fingerprint) -> list[str]:
 def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
     by_module: dict[str, set[str]] = defaultdict(set)
     by_issue: dict[str, set[str]] = defaultdict(set)
+    by_soft_issue: dict[str, set[str]] = defaultdict(set)
     by_file: dict[str, set[str]] = defaultdict(set)
 
     by_lsh_band: dict[tuple[int, tuple[int, ...]], set[str]] = defaultdict(set)
@@ -98,6 +99,8 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
             by_module[module].add(entity_id)
         for issue in fp.linked_issues:
             by_issue[issue].add(entity_id)
+        for issue in fp.soft_linked_issues:
+            by_soft_issue[issue].add(entity_id)
         for path in fp.changed_files:
             by_file[path].add(entity_id)
 
@@ -128,6 +131,7 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
     return CandidateIndex(
         by_module=by_module,
         by_issue=by_issue,
+        by_soft_issue=by_soft_issue,
         by_file=by_file,
         by_lsh_band=by_lsh_band,
         by_simhash_chunk=by_simhash_chunk,
@@ -157,6 +161,8 @@ def retrieve_candidates(
         bump(idx.by_module.get(module, set()))
     for issue in fp.linked_issues:
         bump(idx.by_issue.get(issue, set()))
+    for issue in fp.soft_linked_issues:
+        bump(idx.by_soft_issue.get(issue, set()))
     for path in fp.changed_files:
         bump(idx.by_file.get(path, set()))
 
@@ -221,9 +227,17 @@ def score_pair(
     file_b = set(b.changed_files)
     hunk_a = set(a.hunk_signatures)
     hunk_b = set(b.hunk_signatures)
+    hard_issue_a = set(a.linked_issues)
+    hard_issue_b = set(b.linked_issues)
+    soft_issue_a = set(a.soft_linked_issues)
+    soft_issue_b = set(b.soft_linked_issues)
 
+    file_overlap = _jaccard(file_a, file_b)
+    hunk_overlap = _jaccard(hunk_a, hunk_b)
+    hard_link_overlap = _jaccard(hard_issue_a, hard_issue_b)
+    soft_link_overlap = _jaccard(soft_issue_a, soft_issue_b)
     lineage = max(_jaccard(patch_a, patch_b), _overlap_min(patch_a, patch_b))
-    structure = 0.6 * _jaccard(hunk_a, hunk_b) + 0.4 * _jaccard(file_a, file_b)
+    structure = 0.7 * hunk_overlap + 0.3 * file_overlap
     text_a = a.text_embedding or a.embedding
     text_b = b.text_embedding or b.embedding
     semantic_text = max(0.0, _cosine(text_a, text_b))
@@ -249,6 +263,10 @@ def score_pair(
     breakdown = SimilarityBreakdown(
         lineage=lineage,
         structure=structure,
+        file_overlap=file_overlap,
+        hunk_overlap=hunk_overlap,
+        hard_link_overlap=hard_link_overlap,
+        soft_link_overlap=soft_link_overlap,
         semantic=semantic,
         semantic_text=semantic_text,
         semantic_diff=semantic_diff,
@@ -262,15 +280,28 @@ def score_pair(
 
 
 def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConfig) -> EdgeTier | None:
+    if breakdown.hard_link_overlap > 0.0:
+        return EdgeTier.STRONG
+
     has_structure = (breakdown.structure > 0.0) or (breakdown.lineage > 0.0)
-    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score or (has_structure and breakdown.minhash >= cfg.strong_minhash_min) or (has_structure and breakdown.winnow >= cfg.strong_winnow_min):
+    has_lineage_or_hunk = (breakdown.lineage > 0.0) or (breakdown.hunk_overlap > 0.0)
+    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score:
+        return EdgeTier.STRONG
+    if has_lineage_or_hunk and (breakdown.minhash >= cfg.strong_minhash_min or breakdown.winnow >= cfg.strong_winnow_min):
         return EdgeTier.STRONG
 
     # For unstructured entities (e.g., issue templates), require very high semantic + lexical agreement.
     if not has_structure:
+        if breakdown.soft_link_overlap > 0.0 and breakdown.semantic >= cfg.weak_semantic_min:
+            return EdgeTier.WEAK
         if breakdown.semantic >= cfg.unstructured_semantic_min and breakdown.minhash >= cfg.unstructured_minhash_min and breakdown.winnow >= cfg.unstructured_winnow_min:
             return EdgeTier.WEAK
         return None
+
+    if breakdown.soft_link_overlap > 0.0 and (
+        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min
+    ):
+        return EdgeTier.WEAK
 
     if score >= cfg.min_score and (
         breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min or breakdown.minhash >= cfg.weak_minhash_min or breakdown.simhash >= cfg.weak_simhash_min or breakdown.winnow >= cfg.weak_winnow_min
