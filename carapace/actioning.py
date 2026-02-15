@@ -14,3 +14,5 @@ def apply_routing_decisions(report: EngineReport, sink: SinkConnector) -> None:
             sink.post_comment(entry.entity_id, entry.comment)
         if entry.queue_key:
             sink.route_to_queue(entry.entity_id, entry.queue_key)
+        if entry.close:
+            sink.close_entity(entry.entity_id)

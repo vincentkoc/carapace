@@ -322,12 +322,18 @@ class CarapaceEngine:
             queue = None
             comment = None
             lp = low_pass[entity.id]
+            close_requested = lp.action.value == "close"
+            should_close = close_requested and not self.config.action.safe_mode
 
             if lp.state in {FilterState.SUPPRESS, FilterState.SKIP}:
                 labels.append(labels_cfg.noise_suppressed)
                 if self.config.action.queue_on_suppress:
                     labels.append(labels_cfg.quarantine)
                     queue = "quarantine"
+                if close_requested:
+                    labels.append(labels_cfg.close_candidate)
+                    if self.config.action.add_comments:
+                        comment = self.config.action.close_comment
             else:
                 labels.append(labels_cfg.ready_human)
                 state, duplicate_of, cluster_size = decision_map.get(entity.id, (DecisionState.RELATED, None, 1))
@@ -344,7 +350,15 @@ class CarapaceEngine:
                     if cluster_size > 1:
                         labels.append(labels_cfg.related)
 
-            routing.append(RoutingDecision(entity_id=entity.id, labels=sorted(set(labels)), queue_key=queue, comment=comment))
+            routing.append(
+                RoutingDecision(
+                    entity_id=entity.id,
+                    labels=sorted(set(labels)),
+                    queue_key=queue,
+                    comment=comment,
+                    close=should_close,
+                )
+            )
 
         return routing
 

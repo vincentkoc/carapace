@@ -199,6 +199,8 @@ def test_github_sink_live_calls_api() -> None:
 
     sink.apply_labels("pr:12", ["triage/duplicate"])
     sink.post_comment("pr:12", "hello")
+    sink.close_entity("pr:12")
 
     assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) in fake_client.calls
     assert ("issues/12/comments", "POST", {"body": "hello"}) in fake_client.calls
+    assert ("issues/12", "PATCH", {"state": "closed"}) in fake_client.calls

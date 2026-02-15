@@ -44,6 +44,7 @@ def write_report_bundle(report: EngineReport, output_dir: str | Path) -> None:
             "labels": entry.labels,
             "queue_key": entry.queue_key,
             "comment": entry.comment,
+            "close": entry.close,
         }
         for entry in report.routing
     }

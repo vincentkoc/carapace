@@ -479,6 +479,12 @@ class GithubGhSinkConnector(SinkConnector):
         # GitHub has no native queue primitive; represented by labels/filtered views.
         _ = (entity_id, queue_key)
 
+    def close_entity(self, entity_id: str) -> None:
+        number = self.entity_number_resolver(entity_id)
+        if self.dry_run:
+            return
+        self.client._api_json(f"issues/{number}", method="PATCH", body={"state": "closed"})
+
 
 def _normalize_ci_status(state: str | None) -> CIStatus:
     normalized = (state or "").lower()

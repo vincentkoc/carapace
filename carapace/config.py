@@ -19,11 +19,22 @@ class LowPassConfig(BaseModel):
     ignore_recent_pr_hours: int | None = None
     boost_labels: dict[str, float] = Field(default_factory=lambda: {"security": 1.5, "regression": 1.5})
     stale_days: int | None = 90
+    stale_action: str = "skip"
     suppress_docs_only_if_no_ci: bool = True
     docs_only_suffixes: list[str] = Field(default_factory=lambda: [".md", ".rst", ".txt"])
     docs_only_prefixes: list[str] = Field(default_factory=lambda: ["docs/", ".github/"])
     suppress_bot_authors: bool = False
     bot_author_patterns: list[str] = Field(default_factory=lambda: ["[bot]", "bot"])
+    issue_template_match_threshold: float = 0.7
+    issue_template_max_content_tokens: int = 12
+    issue_template_action: str = "suppress"
+    issue_one_liner_max_tokens: int = 14
+    issue_one_liner_action: str = "suppress"
+    pr_min_body_tokens: int = 0
+    pr_missing_context_action: str = "suppress"
+    pr_large_max_files: int = 40
+    pr_large_max_churn: int = 5000
+    pr_large_action: str = "skip"
 
 
 class SimilarityConfig(BaseModel):
@@ -89,6 +100,7 @@ class LabelsConfig(BaseModel):
     related: str = "triage/related"
     quarantine: str = "triage/quarantine"
     noise_suppressed: str = "triage/noise-suppressed"
+    close_candidate: str = "triage/close-candidate"
     ready_human: str = "triage/ready-human"
 
 
@@ -98,6 +110,7 @@ class ActionConfig(BaseModel):
     safe_mode: bool = True
     add_comments: bool = True
     queue_on_suppress: bool = True
+    close_comment: str = "Auto-closing due to low-signal triage policy. Reopen with more details if needed."
 
 
 class IngestConfig(BaseModel):

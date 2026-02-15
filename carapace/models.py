@@ -27,6 +27,11 @@ class FilterState(str, Enum):
     SKIP = "skip"
 
 
+class LowPassAction(str, Enum):
+    IGNORE = "ignore"
+    CLOSE = "close"
+
+
 class EdgeTier(str, Enum):
     STRONG = "strong"
     WEAK = "weak"
@@ -124,6 +129,7 @@ class LowPassDecision(BaseModel):
 
     entity_id: str
     state: FilterState
+    action: LowPassAction = LowPassAction.IGNORE
     reason_codes: list[str] = Field(default_factory=list)
     priority_weight: float = 1.0
 
@@ -189,6 +195,7 @@ class RoutingDecision(BaseModel):
     labels: list[str] = Field(default_factory=list)
     queue_key: str | None = None
     comment: str | None = None
+    close: bool = False
 
 
 class EngineReport(BaseModel):

@@ -104,3 +104,47 @@ def test_singleton_cluster_not_labeled_canonical_or_related() -> None:
     assert "triage/ready-human" in routing["solo"]
     assert "triage/canonical" not in routing["solo"]
     assert "triage/related" not in routing["solo"]
+
+
+def test_close_candidate_is_labeled_but_not_closed_in_safe_mode() -> None:
+    issue = SourceEntity.model_validate(
+        {
+            "id": "issue:1",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "title": "Template-only issue",
+            "body": "## Summary\n## Steps to reproduce\n## Expected behavior\nOne line",
+            "author": "dev",
+        }
+    )
+    cfg = CarapaceConfig.model_validate(
+        {
+            "low_pass": {"issue_template_action": "close"},
+            "action": {"safe_mode": True},
+        }
+    )
+    report = CarapaceEngine(config=cfg).scan_entities([issue])
+    route = report.routing[0]
+    assert "triage/close-candidate" in route.labels
+    assert route.close is False
+
+
+def test_close_candidate_sets_close_when_safe_mode_off() -> None:
+    issue = SourceEntity.model_validate(
+        {
+            "id": "issue:2",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "title": "Template-only issue",
+            "body": "## Summary\n## Steps to reproduce\n## Expected behavior\nOne line",
+            "author": "dev",
+        }
+    )
+    cfg = CarapaceConfig.model_validate(
+        {
+            "low_pass": {"issue_template_action": "close"},
+            "action": {"safe_mode": False},
+        }
+    )
+    report = CarapaceEngine(config=cfg).scan_entities([issue])
+    assert report.routing[0].close is True

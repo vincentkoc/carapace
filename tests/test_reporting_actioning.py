@@ -18,6 +18,7 @@ class FakeSink:
         self.labels = []
         self.comments = []
         self.routes = []
+        self.closed = []
 
     def apply_labels(self, entity_id: str, labels: list[str]) -> None:
         self.labels.append((entity_id, labels))
@@ -30,6 +31,9 @@ class FakeSink:
 
     def route_to_queue(self, entity_id: str, queue_key: str) -> None:
         self.routes.append((entity_id, queue_key))
+
+    def close_entity(self, entity_id: str) -> None:
+        self.closed.append(entity_id)
 
 
 def _report() -> EngineReport:
@@ -53,7 +57,7 @@ def _report() -> EngineReport:
         low_pass=[],
         routing=[
             RoutingDecision(entity_id="pr:1", labels=["triage/canonical"], comment="ok"),
-            RoutingDecision(entity_id="pr:2", labels=["triage/duplicate"], queue_key="quarantine"),
+            RoutingDecision(entity_id="pr:2", labels=["triage/duplicate"], queue_key="quarantine", close=True),
         ],
         profile={"timing_seconds": {"total": 1.23}},
     )
@@ -73,6 +77,7 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
 
     labels_payload = json.loads((tmp_path / "labels_to_apply.json").read_text())
     assert labels_payload["pr:2"]["queue_key"] == "quarantine"
+    assert labels_payload["pr:2"]["close"] is True
 
 
 def test_apply_routing_decisions_invokes_sink_methods() -> None:
@@ -82,3 +87,4 @@ def test_apply_routing_decisions_invokes_sink_methods() -> None:
     assert len(sink.labels) == 2
     assert len(sink.comments) == 1
     assert len(sink.routes) == 1
+    assert sink.closed == ["pr:2"]
