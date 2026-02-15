@@ -115,11 +115,7 @@ def _material_tokens(fp: Fingerprint) -> list[str]:
 
 
 def _salient_title_tokens(fp: Fingerprint) -> set[str]:
-    return {
-        token
-        for token in fp.title_tokens
-        if token and token not in _TITLE_SALIENT_STOPWORDS and len(token) >= 4
-    }
+    return {token for token in fp.title_tokens if token and token not in _TITLE_SALIENT_STOPWORDS and len(token) >= 4}
 
 
 def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
@@ -321,9 +317,7 @@ def score_pair(
     semantic_text = max(0.0, _cosine(text_a, text_b))
     semantic_diff = max(0.0, _cosine(a.diff_embedding, b.diff_embedding))
     semantic_weight_total = max(1e-9, cfg.semantic_text_share + cfg.semantic_diff_share)
-    semantic = (
-        cfg.semantic_text_share * semantic_text + cfg.semantic_diff_share * semantic_diff
-    ) / semantic_weight_total
+    semantic = (cfg.semantic_text_share * semantic_text + cfg.semantic_diff_share * semantic_diff) / semantic_weight_total
 
     minhash = 0.0
     simhash = 0.0
@@ -404,14 +398,10 @@ def _edge_tier(
             return EdgeTier.WEAK
         return None
 
-    if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and (
-        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.hard_link_weak_semantic_min
-    ):
+    if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and (breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.hard_link_weak_semantic_min):
         return EdgeTier.WEAK
 
-    if breakdown.soft_link_overlap > 0.0 and (
-        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min
-    ):
+    if breakdown.soft_link_overlap > 0.0 and (breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min):
         return EdgeTier.WEAK
 
     if score >= cfg.min_score and (

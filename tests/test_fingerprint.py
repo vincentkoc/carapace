@@ -1,4 +1,4 @@
-from carapace.fingerprint import build_fingerprint
+from carapace.fingerprint import build_diff_text, build_fingerprint
 from carapace.models import DiffHunk, EntityKind, ExternalReviewSignal, SourceEntity
 
 
@@ -52,3 +52,42 @@ def test_issue_fingerprint_includes_self_issue_number_in_links() -> None:
 
     fp = build_fingerprint(entity, text_embedding=[0.1, 0.2, 0.3], diff_embedding=[])
     assert fp.linked_issues == ["42"]
+
+
+def test_build_diff_text_renders_files_and_hunks() -> None:
+    entity = SourceEntity(
+        id="pr:99",
+        repo="acme/repo",
+        kind=EntityKind.PR,
+        number=99,
+        title="Fix parser",
+        body="",
+        author="alice",
+        changed_files=["src/parser.py"],
+        diff_hunks=[
+            DiffHunk(
+                file_path="src/parser.py",
+                context="@@ -1,1 +1,1 @@",
+                added_lines=["new token logic"],
+                removed_lines=["old token logic"],
+            )
+        ],
+    )
+
+    text = build_diff_text(entity)
+    assert "files:src/parser.py" in text
+    assert "hunks:" in text
+    assert "new token logic" in text
+
+
+def test_build_diff_text_empty_for_no_changes() -> None:
+    entity = SourceEntity(
+        id="issue:1",
+        repo="acme/repo",
+        kind=EntityKind.ISSUE,
+        number=1,
+        title="Question",
+        body="",
+        author="alice",
+    )
+    assert build_diff_text(entity) == ""

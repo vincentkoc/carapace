@@ -142,38 +142,20 @@ def rank_canonicals(
             else:
                 sim_to_canonical = _similarity(edge_table, member, canonical)
                 lineage_to_canonical = _lineage_overlap(edge_table, member, canonical)
-                file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
-                    edge_table, member, canonical
-                )
+                file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(edge_table, member, canonical)
                 member_kind = member.split(":", maxsplit=1)[0] if ":" in member else "unknown"
                 canonical_kind = canonical.split(":", maxsplit=1)[0] if ":" in canonical else "unknown"
-                same_kind = (
-                    member_kind == canonical_kind
-                    or member_kind == "unknown"
-                    or canonical_kind == "unknown"
-                )
+                same_kind = member_kind == canonical_kind or member_kind == "unknown" or canonical_kind == "unknown"
                 meets_similarity = sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5
                 has_duplicate_evidence = (
                     lineage_to_canonical >= 0.5
                     or (
                         hard_link_overlap >= cfg.duplicate_hard_link_overlap_min
-                        and (
-                            file_overlap >= cfg.duplicate_hard_link_file_overlap_min
-                            or hunk_overlap >= cfg.duplicate_hard_link_hunk_overlap_min
-                            or title_salient_overlap >= cfg.duplicate_hard_link_title_overlap_min
-                        )
+                        and (file_overlap >= cfg.duplicate_hard_link_file_overlap_min or hunk_overlap >= cfg.duplicate_hard_link_hunk_overlap_min or title_salient_overlap >= cfg.duplicate_hard_link_title_overlap_min)
                     )
                     or hunk_overlap >= cfg.duplicate_hunk_overlap_min
-                    or (
-                        file_overlap >= cfg.duplicate_file_overlap_min
-                        and title_salient_overlap >= cfg.duplicate_file_title_overlap_min
-                        and semantic_text >= cfg.duplicate_semantic_text_min
-                    )
-                    or (
-                        title_salient_overlap >= cfg.duplicate_title_salient_overlap_min
-                        and semantic_text >= cfg.duplicate_semantic_text_min
-                        and hunk_overlap >= cfg.duplicate_hunk_overlap_min
-                    )
+                    or (file_overlap >= cfg.duplicate_file_overlap_min and title_salient_overlap >= cfg.duplicate_file_title_overlap_min and semantic_text >= cfg.duplicate_semantic_text_min)
+                    or (title_salient_overlap >= cfg.duplicate_title_salient_overlap_min and semantic_text >= cfg.duplicate_semantic_text_min and hunk_overlap >= cfg.duplicate_hunk_overlap_min)
                 )
                 title_mismatch_veto = _title_mismatch_veto(
                     lineage_overlap=lineage_to_canonical,
@@ -208,9 +190,7 @@ def rank_canonicals(
             for idx, decision in enumerate(member_decisions):
                 # Only escalate to tie-break for non-duplicate runner-up.
                 if decision.entity_id == ranked[1][0] and decision.state == DecisionState.RELATED:
-                    file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(
-                        edge_table, decision.entity_id, canonical
-                    )
+                    file_overlap, hunk_overlap, hard_link_overlap, title_salient_overlap, semantic_text = _edge_metrics(edge_table, decision.entity_id, canonical)
                     lineage_overlap = _lineage_overlap(edge_table, decision.entity_id, canonical)
                     if _title_mismatch_veto(
                         lineage_overlap=lineage_overlap,
@@ -221,12 +201,7 @@ def rank_canonicals(
                     ):
                         continue
                     tie_break_evidence = (
-                        hard_link_overlap >= cfg.tie_break_hard_link_min
-                        or hunk_overlap >= cfg.tie_break_hunk_overlap_min
-                        or (
-                            file_overlap >= cfg.tie_break_file_overlap_min
-                            and semantic_text >= cfg.tie_break_semantic_text_min
-                        )
+                        hard_link_overlap >= cfg.tie_break_hard_link_min or hunk_overlap >= cfg.tie_break_hunk_overlap_min or (file_overlap >= cfg.tie_break_file_overlap_min and semantic_text >= cfg.tie_break_semantic_text_min)
                     )
                     if decision.score < cfg.tie_break_min_similarity or not tie_break_evidence:
                         continue
