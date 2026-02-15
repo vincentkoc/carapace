@@ -19,11 +19,13 @@ def _fp(
     hunks: list[str],
     embedding: list[float],
     tokens: list[str] | None = None,
+    title_tokens: list[str] | None = None,
     additions: int = 10,
     deletions: int = 2,
 ) -> Fingerprint:
     return Fingerprint(
         entity_id=entity_id,
+        title_tokens=title_tokens or [],
         tokens=tokens or [],
         changed_files=files,
         module_buckets=modules,
@@ -175,6 +177,7 @@ def test_pr_semantic_structure_gate_recovers_low_total_near_duplicates() -> None
         hunks=["h1"],
         embedding=[1.0, 0.0],
         tokens=["gateway", "token"],
+        title_tokens=["gateway", "token", "expiry"],
         additions=10,
         deletions=5,
     )
@@ -187,6 +190,7 @@ def test_pr_semantic_structure_gate_recovers_low_total_near_duplicates() -> None
         hunks=["h1"],
         embedding=[1.0, 0.0],
         tokens=["gateway", "token"],
+        title_tokens=["gateway", "token", "expiry"],
         additions=12,
         deletions=4,
     )

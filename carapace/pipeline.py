@@ -159,7 +159,8 @@ class CarapaceEngine:
                             continue
                         has_text_embedding = bool(fp.text_embedding or fp.embedding)
                         has_diff_embedding = bool(fp.diff_embedding)
-                        if has_text_embedding and (not requires_diff_embedding or has_diff_embedding):
+                        has_title_tokens = bool(fp.title_tokens)
+                        if has_text_embedding and has_title_tokens and (not requires_diff_embedding or has_diff_embedding):
                             fingerprints[entity.id] = fp
                         else:
                             stale_cache_ids.add(entity.id)

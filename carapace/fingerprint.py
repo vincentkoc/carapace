@@ -112,6 +112,7 @@ def build_fingerprint(
 
     return Fingerprint(
         entity_id=entity.id,
+        title_tokens=title_tokens,
         tokens=title_tokens + body_tokens,
         module_buckets=modules,
         changed_files=entity.changed_files,

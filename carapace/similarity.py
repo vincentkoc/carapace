@@ -22,6 +22,36 @@ from carapace.models import EdgeTier, Fingerprint, SimilarityBreakdown, Similari
 
 logger = logging.getLogger(__name__)
 
+_TITLE_SALIENT_STOPWORDS = {
+    "fix",
+    "bug",
+    "feat",
+    "feature",
+    "docs",
+    "chore",
+    "refactor",
+    "test",
+    "add",
+    "update",
+    "improve",
+    "support",
+    "allow",
+    "enable",
+    "with",
+    "from",
+    "when",
+    "after",
+    "before",
+    "into",
+    "for",
+    "the",
+    "and",
+    "or",
+    "web",
+    "search",
+    "provider",
+}
+
 
 @dataclass
 class CandidateIndex:
@@ -78,6 +108,14 @@ def _material_tokens(fp: Fingerprint) -> list[str]:
     tokens.extend(fp.soft_linked_issues)
     tokens.extend(fp.hunk_signatures)
     return [token.lower() for token in tokens if token]
+
+
+def _salient_title_tokens(fp: Fingerprint) -> set[str]:
+    return {
+        token
+        for token in fp.title_tokens
+        if token and token not in _TITLE_SALIENT_STOPWORDS and len(token) >= 4
+    }
 
 
 def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
@@ -231,6 +269,7 @@ def score_pair(
     hard_issue_b = set(b.linked_issues)
     soft_issue_a = set(a.soft_linked_issues)
     soft_issue_b = set(b.soft_linked_issues)
+    title_salient_overlap = _jaccard(_salient_title_tokens(a), _salient_title_tokens(b))
 
     file_overlap = _jaccard(file_a, file_b)
     hunk_overlap = _jaccard(hunk_a, hunk_b)
@@ -265,6 +304,7 @@ def score_pair(
         structure=structure,
         file_overlap=file_overlap,
         hunk_overlap=hunk_overlap,
+        title_salient_overlap=title_salient_overlap,
         hard_link_overlap=hard_link_overlap,
         soft_link_overlap=soft_link_overlap,
         semantic=semantic,
@@ -311,6 +351,7 @@ def _edge_tier(
             breakdown.structure >= cfg.pr_semantic_structure_min
             and breakdown.semantic >= cfg.pr_semantic_min
             and breakdown.simhash >= cfg.pr_semantic_simhash_min
+            and breakdown.title_salient_overlap >= cfg.pr_semantic_title_salient_overlap_min
         ):
             return EdgeTier.WEAK
 

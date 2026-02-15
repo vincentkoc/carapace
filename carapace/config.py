@@ -65,6 +65,7 @@ class SimilarityConfig(BaseModel):
     pr_semantic_structure_min: float = 0.20
     pr_semantic_min: float = 0.70
     pr_semantic_simhash_min: float = 0.70
+    pr_semantic_title_salient_overlap_min: float = 0.08
     weak_structure_min: float = 0.25
     weak_semantic_min: float = 0.30
     weak_minhash_min: float = 0.40

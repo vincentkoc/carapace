@@ -106,6 +106,7 @@ class Fingerprint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     entity_id: str
+    title_tokens: list[str] = Field(default_factory=list)
     tokens: list[str] = Field(default_factory=list)
     module_buckets: list[str] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
@@ -141,6 +142,7 @@ class SimilarityBreakdown(BaseModel):
     structure: float
     file_overlap: float = 0.0
     hunk_overlap: float = 0.0
+    title_salient_overlap: float = 0.0
     hard_link_overlap: float = 0.0
     soft_link_overlap: float = 0.0
     semantic: float
