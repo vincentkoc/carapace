@@ -26,7 +26,7 @@ def test_build_fingerprint_extracts_expected_fields() -> None:
         external_reviews=[ExternalReviewSignal(provider="coderabbit", overall_score=0.8, confidence=0.6)],
     )
 
-    fp = build_fingerprint(entity, embedding=[0.1, 0.2, 0.3])
+    fp = build_fingerprint(entity, text_embedding=[0.1, 0.2, 0.3], diff_embedding=[0.3, 0.2, 0.1])
 
     assert fp.entity_id == "pr:12"
     assert "src/parser/*" in fp.module_buckets
@@ -35,3 +35,5 @@ def test_build_fingerprint_extracts_expected_fields() -> None:
     assert len(fp.hunk_signatures) == 1
     assert fp.reviewer_score == 0.8
     assert fp.embedding == [0.1, 0.2, 0.3]
+    assert fp.text_embedding == [0.1, 0.2, 0.3]
+    assert fp.diff_embedding == [0.3, 0.2, 0.1]

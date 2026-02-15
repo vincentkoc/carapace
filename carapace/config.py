@@ -39,6 +39,8 @@ class SimilarityConfig(BaseModel):
     weight_lineage: float = 0.35
     weight_structure: float = 0.30
     weight_semantic: float = 0.12
+    semantic_text_share: float = 0.65
+    semantic_diff_share: float = 0.35
     weight_minhash: float = 0.10
     weight_simhash: float = 0.06
     weight_winnow: float = 0.07

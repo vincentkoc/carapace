@@ -224,7 +224,14 @@ def score_pair(
 
     lineage = max(_jaccard(patch_a, patch_b), _overlap_min(patch_a, patch_b))
     structure = 0.6 * _jaccard(hunk_a, hunk_b) + 0.4 * _jaccard(file_a, file_b)
-    semantic = max(0.0, _cosine(a.embedding, b.embedding))
+    text_a = a.text_embedding or a.embedding
+    text_b = b.text_embedding or b.embedding
+    semantic_text = max(0.0, _cosine(text_a, text_b))
+    semantic_diff = max(0.0, _cosine(a.diff_embedding, b.diff_embedding))
+    semantic_weight_total = max(1e-9, cfg.semantic_text_share + cfg.semantic_diff_share)
+    semantic = (
+        cfg.semantic_text_share * semantic_text + cfg.semantic_diff_share * semantic_diff
+    ) / semantic_weight_total
 
     minhash = 0.0
     simhash = 0.0
@@ -243,6 +250,8 @@ def score_pair(
         lineage=lineage,
         structure=structure,
         semantic=semantic,
+        semantic_text=semantic_text,
+        semantic_diff=semantic_diff,
         minhash=minhash,
         simhash=simhash,
         winnow=winnow,

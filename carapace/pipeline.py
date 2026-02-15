@@ -13,7 +13,7 @@ from carapace.config import CarapaceConfig, load_effective_config
 from carapace.embeddings.base import EmbeddingProvider
 from carapace.embeddings.local_hash import LocalHashEmbeddingProvider
 from carapace.embeddings.openai_compatible import OpenAICompatibleEmbeddingProvider
-from carapace.fingerprint import build_fingerprint
+from carapace.fingerprint import build_diff_text, build_fingerprint
 from carapace.hooks import HookManager, HookName
 from carapace.low_pass import apply_low_pass
 from carapace.models import (
@@ -163,10 +163,12 @@ class CarapaceEngine:
             )
 
             if to_compute:
-                texts = [f"{entity.title}\n{entity.body}" for entity in to_compute]
-                vectors = self.embedding_provider.embed_texts(texts)
-                for entity, vector in zip(to_compute, vectors):
-                    fingerprints[entity.id] = build_fingerprint(entity, vector)
+                text_inputs = [f"{entity.title}\n{entity.body}" for entity in to_compute]
+                diff_inputs = [build_diff_text(entity) for entity in to_compute]
+                text_vectors = self.embedding_provider.embed_texts(text_inputs)
+                diff_vectors = self.embedding_provider.embed_texts(diff_inputs)
+                for entity, text_vector, diff_vector in zip(to_compute, text_vectors, diff_vectors):
+                    fingerprints[entity.id] = build_fingerprint(entity, text_vector, diff_vector)
 
                 if self.storage:
                     computed_ids = {item.id for item in to_compute}

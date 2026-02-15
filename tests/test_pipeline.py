@@ -91,7 +91,9 @@ def test_pipeline_uses_fingerprint_cache_across_runs(tmp_path) -> None:
         _entity("pr:2", repo="acme/repo", title="Another"),
     ]
     engine.scan_entities(entities)
-    assert provider.calls == 1
+    assert provider.calls == 2
+    engine.scan_entities(entities)
+    assert provider.calls == 2
 
 
 def test_singleton_cluster_not_labeled_canonical_or_related() -> None:

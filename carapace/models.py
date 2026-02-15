@@ -112,6 +112,8 @@ class Fingerprint(BaseModel):
     ci_status: CIStatus = CIStatus.UNKNOWN
     approvals: int = 0
     reviewer_score: float = 0.0
+    text_embedding: list[float] = Field(default_factory=list)
+    diff_embedding: list[float] = Field(default_factory=list)
     embedding: list[float] = Field(default_factory=list)
 
 
@@ -130,6 +132,8 @@ class SimilarityBreakdown(BaseModel):
     lineage: float
     structure: float
     semantic: float
+    semantic_text: float = 0.0
+    semantic_diff: float = 0.0
     minhash: float = 0.0
     simhash: float = 0.0
     winnow: float = 0.0

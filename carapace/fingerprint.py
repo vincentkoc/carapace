@@ -74,7 +74,32 @@ def _hunk_signature(file_path: str, context: str, added: Iterable[str], removed:
     return hashlib.blake2b(material.encode("utf-8"), digest_size=20).hexdigest()
 
 
-def build_fingerprint(entity: SourceEntity, embedding: list[float]) -> Fingerprint:
+def build_diff_text(entity: SourceEntity) -> str:
+    parts: list[str] = []
+    if entity.changed_files:
+        parts.append("files:" + " ".join(entity.changed_files))
+    if entity.diff_hunks:
+        hunk_texts: list[str] = []
+        for hunk in entity.diff_hunks[:200]:
+            hunk_texts.append(
+                " ".join(
+                    [
+                        hunk.file_path,
+                        hunk.context or "",
+                        " ".join(hunk.added_lines[:10]),
+                        " ".join(hunk.removed_lines[:10]),
+                    ]
+                )
+            )
+        parts.append("hunks:" + " ".join(hunk_texts))
+    return "\n".join(parts)
+
+
+def build_fingerprint(
+    entity: SourceEntity,
+    text_embedding: list[float],
+    diff_embedding: list[float] | None = None,
+) -> Fingerprint:
     title_tokens = _tokens(entity.title)
     body_tokens = _tokens(_normalize_body_for_tokens(entity))
     modules = sorted({_module_bucket(path) for path in entity.changed_files})
@@ -99,5 +124,7 @@ def build_fingerprint(entity: SourceEntity, embedding: list[float]) -> Fingerpri
         ci_status=entity.ci_status,
         approvals=entity.approvals,
         reviewer_score=reviewer_score,
-        embedding=embedding,
+        text_embedding=text_embedding,
+        diff_embedding=diff_embedding or [],
+        embedding=text_embedding,
     )
