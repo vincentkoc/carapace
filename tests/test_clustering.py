@@ -2,13 +2,20 @@ from carapace.clustering import build_clusters
 from carapace.models import EdgeTier, SimilarityBreakdown, SimilarityEdge
 
 
-def _edge(a: str, b: str, tier: EdgeTier, score: float = 0.8) -> SimilarityEdge:
+def _edge(a: str, b: str, tier: EdgeTier, score: float = 0.8, *, hard_link: float = 0.0, lineage: float = 0.0) -> SimilarityEdge:
     return SimilarityEdge(
         entity_a=a,
         entity_b=b,
         score=score,
         tier=tier,
-        breakdown=SimilarityBreakdown(lineage=0.0, structure=0.0, semantic=0.0, size_penalty=0.0, total=score),
+        breakdown=SimilarityBreakdown(
+            lineage=lineage,
+            structure=0.0,
+            semantic=0.0,
+            hard_link_overlap=hard_link,
+            size_penalty=0.0,
+            total=score,
+        ),
     )
 
 
@@ -60,3 +67,30 @@ def test_weak_chain_without_strong_neighbors_does_not_bridge_all_nodes() -> None
     assert {"a"} in members
     assert {"b"} in members
     assert {"c"} in members
+
+
+def test_tail_pruning_splits_low_score_leaf_nodes() -> None:
+    clusters = build_clusters(
+        ["a", "b", "c"],
+        [
+            _edge("a", "b", EdgeTier.STRONG, score=0.20),
+            _edge("b", "c", EdgeTier.STRONG, score=0.10),
+        ],
+        tail_prune_score=0.15,
+    )
+    members = [set(c.members) for c in clusters]
+    assert {"a", "b"} in members
+    assert {"c"} in members
+
+
+def test_tail_pruning_keeps_leaf_with_hard_link_signal() -> None:
+    clusters = build_clusters(
+        ["a", "b", "c"],
+        [
+            _edge("a", "b", EdgeTier.STRONG, score=0.20),
+            _edge("b", "c", EdgeTier.STRONG, score=0.10, hard_link=0.5),
+        ],
+        tail_prune_score=0.15,
+    )
+    assert len(clusters) == 1
+    assert set(clusters[0].members) == {"a", "b", "c"}

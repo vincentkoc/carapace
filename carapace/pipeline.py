@@ -29,6 +29,7 @@ from carapace.similarity import compute_similarity_edges_with_stats
 from carapace.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
+FINGERPRINT_CACHE_VERSION = "fp-v5"
 
 
 def _provider_from_config(config: CarapaceConfig) -> EmbeddingProvider:
@@ -138,7 +139,7 @@ class CarapaceEngine:
         if active_entities:
             fp_start = time.perf_counter()
             self.hooks.emit(HookName.BEFORE_FINGERPRINT, context, {})
-            model_id = self.embedding_provider.model_id()
+            model_id = f"{self.embedding_provider.model_id()}::{FINGERPRINT_CACHE_VERSION}"
             requires_diff_embedding = self.config.similarity.semantic_diff_share > 0.0
 
             by_repo: dict[str, list[SourceEntity]] = {}
@@ -209,7 +210,11 @@ class CarapaceEngine:
         sim_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_SIMILARITY, context, {})
         edges, sim_stats = compute_similarity_edges_with_stats(fingerprints, self.config.similarity)
-        clusters = build_clusters([entity.id for entity in active_entities], edges)
+        clusters = build_clusters(
+            [entity.id for entity in active_entities],
+            edges,
+            tail_prune_score=self.config.similarity.cluster_tail_prune_score,
+        )
         self.hooks.emit(HookName.AFTER_SIMILARITY, context, {"edges": len(edges), "clusters": len(clusters)})
         logger.debug(
             "Similarity complete: edges=%s clusters=%s in %.2fs",

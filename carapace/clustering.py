@@ -32,7 +32,70 @@ class UnionFind:
             self.rank[ra] += 1
 
 
-def build_clusters(entity_ids: list[str], edges: list[SimilarityEdge]) -> list[Cluster]:
+def _adjacency(edges: list[SimilarityEdge]) -> dict[str, dict[str, SimilarityEdge]]:
+    graph: dict[str, dict[str, SimilarityEdge]] = defaultdict(dict)
+    for edge in edges:
+        graph[edge.entity_a][edge.entity_b] = edge
+        graph[edge.entity_b][edge.entity_a] = edge
+    return graph
+
+
+def _prune_weak_tails(
+    members: list[str],
+    adjacency: dict[str, dict[str, SimilarityEdge]],
+    min_tail_score: float | None,
+) -> list[list[str]]:
+    if min_tail_score is None or len(members) < 3:
+        return [sorted(members)]
+
+    remaining = set(members)
+    changed = True
+    while changed and len(remaining) > 1:
+        changed = False
+        for node in list(remaining):
+            neighbors = [(other, edge) for other, edge in adjacency.get(node, {}).items() if other in remaining]
+            if len(neighbors) > 1:
+                continue
+            has_hard_link = any(edge.breakdown.hard_link_overlap >= 0.5 for _, edge in neighbors)
+            has_lineage = any(edge.breakdown.lineage >= 0.5 for _, edge in neighbors)
+            if has_hard_link or has_lineage:
+                continue
+            max_score = max((edge.score for _, edge in neighbors), default=0.0)
+            if max_score < min_tail_score:
+                remaining.remove(node)
+                changed = True
+
+    if remaining == set(members):
+        return [sorted(members)]
+
+    groups: list[list[str]] = []
+    seen: set[str] = set()
+    for node in sorted(remaining):
+        if node in seen:
+            continue
+        stack = [node]
+        component: list[str] = []
+        seen.add(node)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            for other in adjacency.get(current, {}):
+                if other in remaining and other not in seen:
+                    seen.add(other)
+                    stack.append(other)
+        groups.append(sorted(component))
+
+    for node in sorted(set(members) - remaining):
+        groups.append([node])
+    return groups
+
+
+def build_clusters(
+    entity_ids: list[str],
+    edges: list[SimilarityEdge],
+    *,
+    tail_prune_score: float | None = None,
+) -> list[Cluster]:
     uf = UnionFind(entity_ids)
 
     strong_neighbors: dict[str, set[str]] = defaultdict(set)
@@ -70,8 +133,13 @@ def build_clusters(entity_ids: list[str], edges: list[SimilarityEdge]) -> list[C
     for entity_id in entity_ids:
         grouped[uf.find(entity_id)].append(entity_id)
 
+    edge_lookup = _adjacency(edges)
+    expanded_groups: list[list[str]] = []
+    for members in grouped.values():
+        expanded_groups.extend(_prune_weak_tails(members, edge_lookup, tail_prune_score))
+
     clusters: list[Cluster] = []
-    for idx, members in enumerate(sorted(grouped.values(), key=lambda items: (-len(items), items))):
-        clusters.append(Cluster(id=f"cluster-{idx + 1}", members=sorted(members)))
+    for idx, members in enumerate(sorted(expanded_groups, key=lambda items: (-len(items), items))):
+        clusters.append(Cluster(id=f"cluster-{idx + 1}", members=members))
 
     return clusters

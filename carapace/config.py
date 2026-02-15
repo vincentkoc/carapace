@@ -45,6 +45,7 @@ class SimilarityConfig(BaseModel):
     min_score: float = 0.72
     strong_score: float = 0.82
     top_k_candidates: int = 64
+    cluster_tail_prune_score: float | None = 0.16
     min_candidate_votes: int = 1
     min_candidate_votes_large: int = 2
     large_run_threshold: int = 2000

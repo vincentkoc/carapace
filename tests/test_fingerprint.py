@@ -37,3 +37,18 @@ def test_build_fingerprint_extracts_expected_fields() -> None:
     assert fp.embedding == [0.1, 0.2, 0.3]
     assert fp.text_embedding == [0.1, 0.2, 0.3]
     assert fp.diff_embedding == [0.3, 0.2, 0.1]
+
+
+def test_issue_fingerprint_includes_self_issue_number_in_links() -> None:
+    entity = SourceEntity(
+        id="issue:42",
+        repo="acme/repo",
+        kind=EntityKind.ISSUE,
+        number=42,
+        title="Bug in parser",
+        body="Repro steps...",
+        author="alice",
+    )
+
+    fp = build_fingerprint(entity, text_embedding=[0.1, 0.2, 0.3], diff_embedding=[])
+    assert fp.linked_issues == ["42"]

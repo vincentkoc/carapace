@@ -109,6 +109,9 @@ def build_fingerprint(
         reviewer_score = sum(sig.overall_score for sig in entity.external_reviews) / len(entity.external_reviews)
 
     hunk_signatures = [_hunk_signature(h.file_path, h.context, h.added_lines, h.removed_lines) for h in entity.diff_hunks]
+    linked_issues = set(entity.linked_issues)
+    if entity.kind == EntityKind.ISSUE and entity.number is not None:
+        linked_issues.add(str(entity.number))
 
     return Fingerprint(
         entity_id=entity.id,
@@ -117,7 +120,7 @@ def build_fingerprint(
         module_buckets=modules,
         changed_files=entity.changed_files,
         hunk_signatures=hunk_signatures,
-        linked_issues=entity.linked_issues,
+        linked_issues=sorted(linked_issues),
         soft_linked_issues=entity.soft_linked_issues,
         commits=entity.commits,
         patch_ids=entity.patch_ids,
