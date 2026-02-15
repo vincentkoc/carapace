@@ -334,9 +334,13 @@ class SQLiteStorage:
         repo: str,
         include_closed: bool = False,
         include_drafts: bool = False,
+        kind: str | None = None,
     ) -> list[SourceEntity]:
         predicates = ["repo = ?"]
         params: list[object] = [repo]
+        if kind is not None:
+            predicates.append("kind = ?")
+            params.append(kind)
         if not include_closed:
             predicates.append("state = 'open'")
         if not include_drafts:
@@ -691,6 +695,27 @@ class SQLiteStorage:
                 ),
             }
 
+            fingerprint_cache_rows = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM fingerprint_cache
+                    WHERE repo = ?
+                    """,
+                    (repo,),
+                ).fetchone()[0]
+            )
+            fingerprint_cache_by_model_rows = conn.execute(
+                """
+                SELECT model_id, COUNT(*) AS c
+                FROM fingerprint_cache
+                WHERE repo = ?
+                GROUP BY model_id
+                """,
+                (repo,),
+            ).fetchall()
+            fingerprint_cache_by_model = {row["model_id"]: int(row["c"]) for row in fingerprint_cache_by_model_rows}
+
         return {
             "total": total,
             "by_kind": by_kind,
@@ -699,4 +724,6 @@ class SQLiteStorage:
             "enriched_prs": enriched_prs,
             "enrich_levels": enrich_levels,
             "integrity": integrity,
+            "fingerprint_cache_rows": fingerprint_cache_rows,
+            "fingerprint_cache_by_model": fingerprint_cache_by_model,
         }

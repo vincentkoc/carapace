@@ -89,6 +89,24 @@ def test_sqlite_ingest_upsert_and_filtering(tmp_path: Path) -> None:
     all_entities = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
     assert {entity.id for entity in all_entities} == {"pr:1", "pr:2", "pr:3"}
 
+    only_prs = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True, kind="pr")
+    assert {entity.id for entity in only_prs} == {"pr:1", "pr:2", "pr:3"}
+
+    issue = SourceEntity.model_validate(
+        {
+            "id": "issue:10",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "state": "open",
+            "title": "Issue",
+            "author": "dora",
+            "number": 10,
+        }
+    )
+    storage.upsert_ingest_entities("acme/repo", [issue])
+    only_issues = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True, kind="issue")
+    assert [entity.id for entity in only_issues] == ["issue:10"]
+
 
 def test_mark_entities_closed_except(tmp_path: Path) -> None:
     db_path = tmp_path / "carapace.db"

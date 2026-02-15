@@ -37,6 +37,14 @@ class CandidateIndex:
     winnow_sets: dict[str, set[int]]
 
 
+@dataclass
+class SimilarityComputationStats:
+    entities_total: int = 0
+    candidate_links_generated: int = 0
+    unique_pairs_scored: int = 0
+    edges_emitted: int = 0
+
+
 def _jaccard(items_a: set[str] | set[int], items_b: set[str] | set[int]) -> float:
     if not items_a and not items_b:
         return 0.0
@@ -131,7 +139,14 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityC
     )
 
 
-def retrieve_candidates(entity_id: str, fp: Fingerprint, idx: CandidateIndex, cfg: SimilarityConfig) -> list[str]:
+def retrieve_candidates(
+    entity_id: str,
+    fp: Fingerprint,
+    idx: CandidateIndex,
+    cfg: SimilarityConfig,
+    *,
+    total_entities: int | None = None,
+) -> list[str]:
     candidate_votes: dict[str, int] = defaultdict(int)
 
     def bump(values: set[str]) -> None:
@@ -160,7 +175,14 @@ def retrieve_candidates(entity_id: str, fp: Fingerprint, idx: CandidateIndex, cf
         for hash_value in idx.winnow_sets.get(entity_id, set()):
             bump(idx.by_winnow_hash.get(hash_value, set()))
 
-    ranked = sorted(candidate_votes.items(), key=lambda item: (-item[1], item[0]))
+    vote_floor = cfg.min_candidate_votes
+    if total_entities is not None and total_entities >= cfg.large_run_threshold:
+        vote_floor = max(vote_floor, cfg.min_candidate_votes_large)
+
+    ranked = sorted(
+        ((candidate, votes) for candidate, votes in candidate_votes.items() if votes >= vote_floor),
+        key=lambda item: (-item[1], item[0]),
+    )
     return [candidate for candidate, _ in ranked[: cfg.top_k_candidates]]
 
 
@@ -258,21 +280,27 @@ def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConf
     return None
 
 
-def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> list[SimilarityEdge]:
+def compute_similarity_edges_with_stats(
+    fingerprints: dict[str, Fingerprint],
+    cfg: SimilarityConfig,
+) -> tuple[list[SimilarityEdge], SimilarityComputationStats]:
     start = time.perf_counter()
     idx = build_candidate_index(fingerprints, cfg)
     pair_seen: set[tuple[str, str]] = set()
     edges: list[SimilarityEdge] = []
+    stats = SimilarityComputationStats(entities_total=len(fingerprints))
 
     total = len(fingerprints)
     for counter, (entity_id, fp) in enumerate(fingerprints.items(), start=1):
-        candidates = retrieve_candidates(entity_id, fp, idx, cfg)
+        candidates = retrieve_candidates(entity_id, fp, idx, cfg, total_entities=total)
+        stats.candidate_links_generated += len(candidates)
         for other_id in candidates:
             a, b = sorted((entity_id, other_id))
             pair = (a, b)
             if pair in pair_seen:
                 continue
             pair_seen.add(pair)
+            stats.unique_pairs_scored += 1
 
             score, breakdown = score_pair(fingerprints[a], fingerprints[b], cfg, idx=idx)
             tier = _edge_tier(score, breakdown, cfg)
@@ -288,6 +316,7 @@ def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: Similari
                     breakdown=breakdown,
                 )
             )
+            stats.edges_emitted += 1
 
         if counter % 100 == 0 or counter == total:
             logger.debug(
@@ -306,4 +335,9 @@ def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: Similari
                 time.perf_counter() - start,
             )
 
+    return edges, stats
+
+
+def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> list[SimilarityEdge]:
+    edges, _ = compute_similarity_edges_with_stats(fingerprints, cfg)
     return edges

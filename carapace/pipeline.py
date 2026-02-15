@@ -24,7 +24,7 @@ from carapace.models import (
     SourceEntity,
 )
 from carapace.clustering import build_clusters
-from carapace.similarity import compute_similarity_edges
+from carapace.similarity import compute_similarity_edges_with_stats
 from carapace.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -128,8 +128,12 @@ class CarapaceEngine:
             logger.debug("Low-pass reason counts: %s", dict(reason_counts))
         if len(active_entities) == len(entities):
             logger.debug("Low-pass passed all entities. Tune low_pass config if more suppression is expected.")
+        low_pass_elapsed = time.perf_counter() - scan_start
 
         fingerprints = {}
+        fingerprint_cache_hits = 0
+        fingerprint_cache_misses = 0
+        fp_elapsed = 0.0
         if active_entities:
             fp_start = time.perf_counter()
             self.hooks.emit(HookName.BEFORE_FINGERPRINT, context, {})
@@ -147,8 +151,10 @@ class CarapaceEngine:
                         model_id=model_id,
                     )
                     fingerprints.update(cached)
+            fingerprint_cache_hits = len(fingerprints)
 
             to_compute = [entity for entity in active_entities if entity.id not in fingerprints]
+            fingerprint_cache_misses = len(to_compute)
             logger.info(
                 "Fingerprint cache: hits=%s misses=%s",
                 len(fingerprints),
@@ -170,22 +176,23 @@ class CarapaceEngine:
                             fingerprints,
                             model_id=model_id,
                         )
+            fp_elapsed = time.perf_counter() - fp_start
             self.hooks.emit(HookName.AFTER_FINGERPRINT, context, {"count": len(fingerprints)})
             logger.debug(
                 "Fingerprinting complete: %s fingerprints in %.2fs",
                 len(fingerprints),
-                time.perf_counter() - fp_start,
+                fp_elapsed,
             )
             logger.info(
                 "Fingerprinting complete: %s fingerprints in %.2fs",
                 len(fingerprints),
-                time.perf_counter() - fp_start,
+                fp_elapsed,
             )
         self.last_fingerprints = fingerprints
 
         sim_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_SIMILARITY, context, {})
-        edges = compute_similarity_edges(fingerprints, self.config.similarity)
+        edges, sim_stats = compute_similarity_edges_with_stats(fingerprints, self.config.similarity)
         clusters = build_clusters([entity.id for entity in active_entities], edges)
         self.hooks.emit(HookName.AFTER_SIMILARITY, context, {"edges": len(edges), "clusters": len(clusters)})
         logger.debug(
@@ -200,6 +207,7 @@ class CarapaceEngine:
             len(clusters),
             time.perf_counter() - sim_start,
         )
+        sim_elapsed = time.perf_counter() - sim_start
 
         canonical_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_CANONICAL, context, {})
@@ -215,12 +223,41 @@ class CarapaceEngine:
             len(canonical),
             time.perf_counter() - canonical_start,
         )
+        canonical_elapsed = time.perf_counter() - canonical_start
 
+        routing_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_ACTION, context, {})
         routing = self._build_routing(entities, low_pass, canonical)
         self.hooks.emit(HookName.AFTER_ACTION, context, {"routing": len(routing)})
         logger.debug("Routing decisions generated: %s", len(routing))
         logger.info("Routing decisions generated: %s", len(routing))
+        routing_elapsed = time.perf_counter() - routing_start
+        total_elapsed = time.perf_counter() - scan_start
+
+        profile = {
+            "timing_seconds": {
+                "low_pass": low_pass_elapsed,
+                "fingerprint": fp_elapsed,
+                "similarity": sim_elapsed,
+                "canonical": canonical_elapsed,
+                "routing": routing_elapsed,
+                "total": total_elapsed,
+            },
+            "counts": {
+                "processed_entities": len(entities),
+                "active_entities": len(active_entities),
+                "suppressed_entities": suppressed,
+                "skipped_entities": skipped,
+                "fingerprint_cache_hits": fingerprint_cache_hits,
+                "fingerprint_cache_misses": fingerprint_cache_misses,
+                "similarity_candidate_links": sim_stats.candidate_links_generated,
+                "similarity_pairs_scored": sim_stats.unique_pairs_scored,
+                "similarity_edges": sim_stats.edges_emitted,
+                "clusters": len(clusters),
+                "canonical_decisions": len(canonical),
+                "routing_decisions": len(routing),
+            },
+        }
 
         report = EngineReport(
             processed_entities=len(entities),
@@ -232,6 +269,7 @@ class CarapaceEngine:
             canonical_decisions=canonical,
             low_pass=list(low_pass.values()),
             routing=routing,
+            profile=profile,
         )
         if self.storage and self.config.storage.persist_runs:
             self.storage.save_run(
@@ -245,7 +283,7 @@ class CarapaceEngine:
             "Scan completed: processed=%s clusters=%s total_time=%.2fs",
             len(entities),
             len(clusters),
-            time.perf_counter() - scan_start,
+            total_elapsed,
         )
         return report
 

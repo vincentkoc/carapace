@@ -197,6 +197,68 @@ storage:
     assert (out_dir / "triage_report.md").exists()
 
 
+def test_process_stored_can_filter_entity_kind_issue(tmp_path: Path) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    out_dir = tmp_path / "out"
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="PR",
+                body="",
+                author="alice",
+            ),
+            SourceEntity(
+                id="issue:2",
+                repo="acme/repo",
+                kind=EntityKind.ISSUE,
+                number=2,
+                state="open",
+                title="Issue",
+                body="",
+                author="bob",
+            ),
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: false
+"""
+    )
+
+    exit_code = cli.main(
+        [
+            "process-stored",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--output-dir",
+            str(out_dir),
+            "--skip-repo-path-check",
+            "--entity-kind",
+            "issue",
+        ]
+    )
+    assert exit_code == 0
+
+
 def test_process_stored_enrich_failure_does_not_set_watermark(tmp_path: Path, monkeypatch) -> None:
     from carapace.storage import SQLiteStorage
 
@@ -375,3 +437,66 @@ storage:
     payload = json.loads(out)
     assert payload["repo"] == "acme/repo"
     assert payload["summary"]["total"] == 1
+
+
+def test_enrich_stored_command_enriches_prs(tmp_path: Path, monkeypatch) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="PR",
+                body="",
+                author="alice",
+                changed_files=[],
+            )
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: false
+"""
+    )
+
+    class FakeSource:
+        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+            _ = (repo, gh_bin)
+
+        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
+            _ = (include_comments, mode)
+            return entity.model_copy(update={"changed_files": ["src/a.py"]})
+
+    monkeypatch.setattr(cli, "GithubGhSourceConnector", FakeSource)
+
+    exit_code = cli.main(
+        [
+            "enrich-stored",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--skip-repo-path-check",
+            "--enrich-workers",
+            "1",
+            "--enrich-flush-every",
+            "1",
+        ]
+    )
+    assert exit_code == 0
+    loaded = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
+    assert loaded[0].changed_files == ["src/a.py"]

@@ -1,6 +1,12 @@
 from carapace.config import SimilarityConfig
 from carapace.models import Fingerprint
-from carapace.similarity import build_candidate_index, compute_similarity_edges, retrieve_candidates, score_pair
+from carapace.similarity import (
+    build_candidate_index,
+    compute_similarity_edges,
+    compute_similarity_edges_with_stats,
+    retrieve_candidates,
+    score_pair,
+)
 
 
 def _fp(
@@ -143,3 +149,16 @@ def test_advanced_algorithms_retrieve_without_file_or_issue_overlap() -> None:
     idx = build_candidate_index({"a": a, "b": b}, cfg)
     candidates = retrieve_candidates("a", a, idx, cfg)
     assert "b" in candidates
+
+
+def test_compute_similarity_edges_with_stats() -> None:
+    cfg = SimilarityConfig()
+    fps = {
+        "a": _fp("a", files=["src/x.py"], modules=["src/*"], issues=[], patch_ids=["p1"], hunks=["h1"], embedding=[1, 0]),
+        "b": _fp("b", files=["src/x.py"], modules=["src/*"], issues=[], patch_ids=["p1"], hunks=["h1"], embedding=[1, 0]),
+    }
+    edges, stats = compute_similarity_edges_with_stats(fps, cfg)
+    assert len(edges) == 1
+    assert stats.entities_total == 2
+    assert stats.unique_pairs_scored >= 1
+    assert stats.edges_emitted == 1

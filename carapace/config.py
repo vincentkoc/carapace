@@ -33,6 +33,9 @@ class SimilarityConfig(BaseModel):
     min_score: float = 0.72
     strong_score: float = 0.82
     top_k_candidates: int = 64
+    min_candidate_votes: int = 1
+    min_candidate_votes_large: int = 2
+    large_run_threshold: int = 2000
     weight_lineage: float = 0.35
     weight_structure: float = 0.30
     weight_semantic: float = 0.12

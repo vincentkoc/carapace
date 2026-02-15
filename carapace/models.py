@@ -194,3 +194,4 @@ class EngineReport(BaseModel):
     canonical_decisions: list[CanonicalDecision]
     low_pass: list[LowPassDecision]
     routing: list[RoutingDecision]
+    profile: dict[str, Any] = Field(default_factory=dict)

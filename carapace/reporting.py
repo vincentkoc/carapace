@@ -49,3 +49,4 @@ def write_report_bundle(report: EngineReport, output_dir: str | Path) -> None:
     }
     (out / "labels_to_apply.json").write_text(json.dumps(labels_payload, indent=2))
     (out / "triage_report.md").write_text(render_markdown_report(report))
+    (out / "scan_profile.json").write_text(json.dumps(report.profile, indent=2))

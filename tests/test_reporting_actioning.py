@@ -55,6 +55,7 @@ def _report() -> EngineReport:
             RoutingDecision(entity_id="pr:1", labels=["triage/canonical"], comment="ok"),
             RoutingDecision(entity_id="pr:2", labels=["triage/duplicate"], queue_key="quarantine"),
         ],
+        profile={"timing_seconds": {"total": 1.23}},
     )
 
 
@@ -68,6 +69,7 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
     assert (tmp_path / "triage_report.md").exists()
     assert (tmp_path / "clusters.json").exists()
     assert (tmp_path / "labels_to_apply.json").exists()
+    assert (tmp_path / "scan_profile.json").exists()
 
     labels_payload = json.loads((tmp_path / "labels_to_apply.json").read_text())
     assert labels_payload["pr:2"]["queue_key"] == "quarantine"

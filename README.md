@@ -62,6 +62,7 @@ carapace ingest-github \
 carapace process-stored \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
+  --entity-kind pr \
   --output-dir ./carapace-out/openclaw
 
 # 3) Audit ingest DB quality/integrity quickly
@@ -76,6 +77,7 @@ carapace --log-level INFO process-stored \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --output-dir ./carapace-out/openclaw \
+  --entity-kind pr \
   --enrich-missing \
   --enrich-mode minimal \
   --enrich-workers 8 \
@@ -89,6 +91,16 @@ Notes:
 - Enrichment writes back to SQLite in batches (`--enrich-flush-every`) so interrupted runs can resume without losing all progress.
 - `minimal` enrichment uses a fast files-only API path and records watermarks by PR `updated_at`.
 - Processing now reuses a warm fingerprint cache in SQLite (keyed by repo/entity/model/updated_at), so repeat runs avoid recomputing unchanged embeddings/fingerprints.
+
+Enrich-only workflow (split from scan):
+```bash
+carapace --log-level INFO enrich-stored \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --entity-kind pr \
+  --enrich-mode minimal \
+  --enrich-workers 8
+```
 
 Enrichment watermark behavior:
 - Enrichment is tracked per PR by `updated_at` revision.
