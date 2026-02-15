@@ -95,7 +95,11 @@ class CanonicalConfig(BaseModel):
     weight_approvals: float = 1.5
     weight_priority: float = 1.0
     weight_size_penalty: float = 1.0
-    duplicate_threshold: float = 0.25
+    duplicate_threshold: float = 0.22
+    duplicate_file_overlap_min: float = 0.80
+    duplicate_hunk_overlap_min: float = 0.80
+    duplicate_title_salient_overlap_min: float = 0.20
+    duplicate_hard_link_overlap_min: float = 0.50
     tie_margin: float = 0.10
 
 
