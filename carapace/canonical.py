@@ -112,7 +112,14 @@ def rank_canonicals(
             else:
                 sim_to_canonical = _similarity(edge_table, member, canonical)
                 lineage_to_canonical = _lineage_overlap(edge_table, member, canonical)
-                if sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5:
+                member_kind = member.split(":", maxsplit=1)[0] if ":" in member else "unknown"
+                canonical_kind = canonical.split(":", maxsplit=1)[0] if ":" in canonical else "unknown"
+                same_kind = (
+                    member_kind == canonical_kind
+                    or member_kind == "unknown"
+                    or canonical_kind == "unknown"
+                )
+                if same_kind and (sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5):
                     state = DecisionState.DUPLICATE
                     reason = f"Similarity {sim_to_canonical:.2f} / lineage {lineage_to_canonical:.2f} meets duplicate criteria"
                     duplicate_of = canonical
@@ -134,7 +141,8 @@ def rank_canonicals(
 
         if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < cfg.tie_margin:
             for idx, decision in enumerate(member_decisions):
-                if decision.entity_id == ranked[1][0] and decision.state != DecisionState.CANONICAL:
+                # Only escalate to tie-break for non-duplicate runner-up.
+                if decision.entity_id == ranked[1][0] and decision.state == DecisionState.RELATED:
                     member_decisions[idx] = MemberDecision(
                         entity_id=decision.entity_id,
                         state=DecisionState.TIE_BREAK,

@@ -85,7 +85,7 @@ def test_lineage_overlap_marks_duplicate_even_below_duplicate_threshold() -> Non
 
 
 def test_tie_margin_marks_runner_up_for_human_tie_break() -> None:
-    cfg = CanonicalConfig(tie_margin=10.0)
+    cfg = CanonicalConfig(tie_margin=10.0, duplicate_threshold=0.95)
     clusters = [Cluster(id="cluster-1", members=["a", "b"])]
     fingerprints = {
         "a": _fp("a", CIStatus.PASS, reviewer=0.5, approvals=1, files=["src/x.py"]),
@@ -100,3 +100,19 @@ def test_tie_margin_marks_runner_up_for_human_tie_break() -> None:
     d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
     states = {m.state for m in d.member_decisions}
     assert DecisionState.TIE_BREAK in states
+
+
+def test_mixed_kind_cluster_marks_related_not_duplicate() -> None:
+    clusters = [Cluster(id="cluster-1", members=["issue:1", "pr:1"])]
+    fingerprints = {
+        "issue:1": _fp("issue:1", CIStatus.UNKNOWN, reviewer=0.0, approvals=0, files=[]),
+        "pr:1": _fp("pr:1", CIStatus.PASS, reviewer=0.5, approvals=1, files=["src/x.py"]),
+    }
+    low_pass = {
+        "issue:1": LowPassDecision(entity_id="issue:1", state="pass", priority_weight=1.0),
+        "pr:1": LowPassDecision(entity_id="pr:1", state="pass", priority_weight=1.0),
+    }
+    edges = [_edge("issue:1", "pr:1", score=0.9)]
+    decision = rank_canonicals(clusters, fingerprints, edges, low_pass, CanonicalConfig(duplicate_threshold=0.1))[0]
+    non_canonical = next(item for item in decision.member_decisions if item.entity_id != decision.canonical_entity_id)
+    assert non_canonical.state == DecisionState.RELATED

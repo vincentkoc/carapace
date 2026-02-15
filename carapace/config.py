@@ -95,7 +95,7 @@ class CanonicalConfig(BaseModel):
     weight_approvals: float = 1.5
     weight_priority: float = 1.0
     weight_size_penalty: float = 1.0
-    duplicate_threshold: float = 0.35
+    duplicate_threshold: float = 0.25
     tie_margin: float = 0.10
 
 
