@@ -1,0 +1,27 @@
+low_pass:
+  hard_skip_labels:
+    - invalid
+    - wontfix
+    - duplicate
+    - stale
+  soft_suppress_labels:
+    - question
+    - discussion
+  boost_labels:
+    security: 1.5
+    regression: 1.5
+  stale_days: 90
+  suppress_docs_only_if_no_ci: true
+
+similarity:
+  min_score: 0.72
+  strong_score: 0.82
+  top_k_candidates: 64
+
+canonical:
+  duplicate_threshold: 0.78
+
+action:
+  safe_mode: true
+  add_comments: true
+  queue_on_suppress: true
