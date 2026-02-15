@@ -26,16 +26,32 @@ class LowPassConfig(BaseModel):
 class SimilarityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    use_advanced_algorithms: bool = True
     min_score: float = 0.72
     strong_score: float = 0.82
     top_k_candidates: int = 64
-    weight_lineage: float = 0.45
-    weight_structure: float = 0.40
-    weight_semantic: float = 0.15
+    weight_lineage: float = 0.35
+    weight_structure: float = 0.30
+    weight_semantic: float = 0.12
+    weight_minhash: float = 0.10
+    weight_simhash: float = 0.06
+    weight_winnow: float = 0.07
     size_penalty_weight: float = 0.10
     lineage_strong_overlap: float = 0.50
     weak_structure_min: float = 0.25
     weak_semantic_min: float = 0.30
+    weak_minhash_min: float = 0.40
+    weak_simhash_min: float = 0.65
+    weak_winnow_min: float = 0.20
+    strong_minhash_min: float = 0.85
+    strong_winnow_min: float = 0.55
+    minhash_num_perm: int = 64
+    minhash_bands: int = 8
+    minhash_shingle_k: int = 3
+    simhash_bits: int = 64
+    simhash_chunk_bits: int = 16
+    winnow_kgram: int = 5
+    winnow_window: int = 4
 
 
 class CanonicalConfig(BaseModel):

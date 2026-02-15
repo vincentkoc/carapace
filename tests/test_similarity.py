@@ -12,11 +12,13 @@ def _fp(
     patch_ids: list[str],
     hunks: list[str],
     embedding: list[float],
+    tokens: list[str] | None = None,
     additions: int = 10,
     deletions: int = 2,
 ) -> Fingerprint:
     return Fingerprint(
         entity_id=entity_id,
+        tokens=tokens or [],
         changed_files=files,
         module_buckets=modules,
         linked_issues=issues,
@@ -29,14 +31,15 @@ def _fp(
 
 
 def test_candidate_retrieval_uses_module_issue_and_file_indices() -> None:
+    cfg = SimilarityConfig()
     fps = {
         "a": _fp("a", files=["src/a.py"], modules=["src/*"], issues=["12"], patch_ids=[], hunks=[], embedding=[1, 0]),
         "b": _fp("b", files=["src/b.py"], modules=["src/*"], issues=[], patch_ids=[], hunks=[], embedding=[1, 0]),
         "c": _fp("c", files=["docs/a.md"], modules=["docs/*"], issues=["12"], patch_ids=[], hunks=[], embedding=[0, 1]),
     }
-    idx = build_candidate_index(fps)
+    idx = build_candidate_index(fps, cfg)
 
-    candidates = retrieve_candidates("a", fps["a"], idx, top_k=10)
+    candidates = retrieve_candidates("a", fps["a"], idx, cfg)
     assert set(candidates) == {"b", "c"}
 
 
@@ -65,9 +68,13 @@ def test_score_pair_prefers_lineage_and_penalizes_size() -> None:
         deletions=100,
     )
 
-    total, breakdown = score_pair(a, b, cfg)
+    idx = build_candidate_index({"a": a, "b": b}, cfg)
+    total, breakdown = score_pair(a, b, cfg, idx=idx)
     assert breakdown.lineage == 1.0
     assert breakdown.structure > 0.0
+    assert breakdown.minhash >= 0.0
+    assert breakdown.simhash >= 0.0
+    assert breakdown.winnow >= 0.0
     assert breakdown.size_penalty > 0.0
     assert total > 0.5
 
@@ -109,3 +116,30 @@ def test_compute_similarity_edges_creates_single_strong_edge() -> None:
     edge = edges[0]
     assert {edge.entity_a, edge.entity_b} == {"a", "b"}
     assert edge.tier.value == "strong"
+
+
+def test_advanced_algorithms_retrieve_without_file_or_issue_overlap() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True)
+    a = _fp(
+        "a",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["fix", "cache", "key", "collision"],
+    )
+    b = _fp(
+        "b",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["fix", "cache", "key", "collision"],
+    )
+    idx = build_candidate_index({"a": a, "b": b}, cfg)
+    candidates = retrieve_candidates("a", a, idx, cfg)
+    assert "b" in candidates

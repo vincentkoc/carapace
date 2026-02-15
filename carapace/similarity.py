@@ -6,6 +6,16 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass
 
+from carapace.algorithms import (
+    hamming_distance,
+    minhash_lsh_bands,
+    minhash_signature,
+    minhash_similarity,
+    simhash64,
+    simhash_chunks,
+    simhash_similarity,
+    winnowing_fingerprints,
+)
 from carapace.config import SimilarityConfig
 from carapace.models import EdgeTier, Fingerprint, SimilarityBreakdown, SimilarityEdge
 
@@ -15,9 +25,15 @@ class CandidateIndex:
     by_module: dict[str, set[str]]
     by_issue: dict[str, set[str]]
     by_file: dict[str, set[str]]
+    by_lsh_band: dict[tuple[int, tuple[int, ...]], set[str]]
+    by_simhash_chunk: dict[tuple[int, int], set[str]]
+    by_winnow_hash: dict[int, set[str]]
+    minhash_signatures: dict[str, list[int]]
+    simhash_values: dict[str, int]
+    winnow_sets: dict[str, set[int]]
 
 
-def _jaccard(items_a: set[str], items_b: set[str]) -> float:
+def _jaccard(items_a: set[str] | set[int], items_b: set[str] | set[int]) -> float:
     if not items_a and not items_b:
         return 0.0
     union = items_a | items_b
@@ -43,10 +59,28 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return max(-1.0, min(1.0, dot / (norm_a * norm_b)))
 
 
-def build_candidate_index(fingerprints: dict[str, Fingerprint]) -> CandidateIndex:
+def _material_tokens(fp: Fingerprint) -> list[str]:
+    tokens: list[str] = []
+    tokens.extend(fp.tokens)
+    tokens.extend(fp.changed_files)
+    tokens.extend(fp.module_buckets)
+    tokens.extend(fp.linked_issues)
+    tokens.extend(fp.hunk_signatures)
+    return [token.lower() for token in tokens if token]
+
+
+def build_candidate_index(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> CandidateIndex:
     by_module: dict[str, set[str]] = defaultdict(set)
     by_issue: dict[str, set[str]] = defaultdict(set)
     by_file: dict[str, set[str]] = defaultdict(set)
+
+    by_lsh_band: dict[tuple[int, tuple[int, ...]], set[str]] = defaultdict(set)
+    by_simhash_chunk: dict[tuple[int, int], set[str]] = defaultdict(set)
+    by_winnow_hash: dict[int, set[str]] = defaultdict(set)
+
+    minhash_signatures: dict[str, list[int]] = {}
+    simhash_values: dict[str, int] = {}
+    winnow_sets: dict[str, set[int]] = {}
 
     for entity_id, fp in fingerprints.items():
         for module in fp.module_buckets:
@@ -56,24 +90,106 @@ def build_candidate_index(fingerprints: dict[str, Fingerprint]) -> CandidateInde
         for path in fp.changed_files:
             by_file[path].add(entity_id)
 
-    return CandidateIndex(by_module=by_module, by_issue=by_issue, by_file=by_file)
+        if not cfg.use_advanced_algorithms:
+            continue
+
+        tokens = _material_tokens(fp)
+
+        signature = minhash_signature(
+            tokens,
+            num_perm=cfg.minhash_num_perm,
+            shingle_k=cfg.minhash_shingle_k,
+        )
+        minhash_signatures[entity_id] = signature
+        for band in minhash_lsh_bands(signature, bands=cfg.minhash_bands):
+            by_lsh_band[band].add(entity_id)
+
+        simhash_value = simhash64(tokens, bits=cfg.simhash_bits)
+        simhash_values[entity_id] = simhash_value
+        for chunk in simhash_chunks(simhash_value, bits=cfg.simhash_bits, chunk_bits=cfg.simhash_chunk_bits):
+            by_simhash_chunk[chunk].add(entity_id)
+
+        winnow = winnowing_fingerprints(tokens, k=cfg.winnow_kgram, window=cfg.winnow_window)
+        winnow_sets[entity_id] = winnow
+        for hash_value in winnow:
+            by_winnow_hash[hash_value].add(entity_id)
+
+    return CandidateIndex(
+        by_module=by_module,
+        by_issue=by_issue,
+        by_file=by_file,
+        by_lsh_band=by_lsh_band,
+        by_simhash_chunk=by_simhash_chunk,
+        by_winnow_hash=by_winnow_hash,
+        minhash_signatures=minhash_signatures,
+        simhash_values=simhash_values,
+        winnow_sets=winnow_sets,
+    )
 
 
-def retrieve_candidates(entity_id: str, fp: Fingerprint, idx: CandidateIndex, top_k: int) -> list[str]:
-    candidates: set[str] = set()
+def retrieve_candidates(entity_id: str, fp: Fingerprint, idx: CandidateIndex, cfg: SimilarityConfig) -> list[str]:
+    candidate_votes: dict[str, int] = defaultdict(int)
+
+    def bump(values: set[str]) -> None:
+        for candidate in values:
+            if candidate != entity_id:
+                candidate_votes[candidate] += 1
 
     for module in fp.module_buckets:
-        candidates.update(idx.by_module.get(module, set()))
+        bump(idx.by_module.get(module, set()))
     for issue in fp.linked_issues:
-        candidates.update(idx.by_issue.get(issue, set()))
+        bump(idx.by_issue.get(issue, set()))
     for path in fp.changed_files:
-        candidates.update(idx.by_file.get(path, set()))
+        bump(idx.by_file.get(path, set()))
 
-    candidates.discard(entity_id)
-    return sorted(candidates)[:top_k]
+    if cfg.use_advanced_algorithms:
+        signature = idx.minhash_signatures.get(entity_id)
+        if signature:
+            for band in minhash_lsh_bands(signature, bands=cfg.minhash_bands):
+                bump(idx.by_lsh_band.get(band, set()))
+
+        simhash_value = idx.simhash_values.get(entity_id)
+        if simhash_value is not None:
+            for chunk in simhash_chunks(simhash_value, bits=cfg.simhash_bits, chunk_bits=cfg.simhash_chunk_bits):
+                bump(idx.by_simhash_chunk.get(chunk, set()))
+
+        for hash_value in idx.winnow_sets.get(entity_id, set()):
+            bump(idx.by_winnow_hash.get(hash_value, set()))
+
+    ranked = sorted(candidate_votes.items(), key=lambda item: (-item[1], item[0]))
+    return [candidate for candidate, _ in ranked[: cfg.top_k_candidates]]
 
 
-def score_pair(a: Fingerprint, b: Fingerprint, cfg: SimilarityConfig) -> tuple[float, SimilarityBreakdown]:
+def _advanced_scores(
+    a: Fingerprint,
+    b: Fingerprint,
+    idx: CandidateIndex,
+    cfg: SimilarityConfig,
+) -> tuple[float, float, float]:
+    if not cfg.use_advanced_algorithms:
+        return 0.0, 0.0, 0.0
+
+    sig_a = idx.minhash_signatures.get(a.entity_id)
+    sig_b = idx.minhash_signatures.get(b.entity_id)
+    minhash = minhash_similarity(sig_a or [], sig_b or [])
+
+    sim_a = idx.simhash_values.get(a.entity_id, 0)
+    sim_b = idx.simhash_values.get(b.entity_id, 0)
+    simhash = simhash_similarity(sim_a, sim_b, bits=cfg.simhash_bits)
+
+    winnow_a = idx.winnow_sets.get(a.entity_id, set())
+    winnow_b = idx.winnow_sets.get(b.entity_id, set())
+    winnow = _jaccard(winnow_a, winnow_b)
+
+    return minhash, simhash, winnow
+
+
+def score_pair(
+    a: Fingerprint,
+    b: Fingerprint,
+    cfg: SimilarityConfig,
+    idx: CandidateIndex | None = None,
+) -> tuple[float, SimilarityBreakdown]:
     patch_a = set(a.patch_ids)
     patch_b = set(b.patch_ids)
     file_a = set(a.changed_files)
@@ -85,6 +201,12 @@ def score_pair(a: Fingerprint, b: Fingerprint, cfg: SimilarityConfig) -> tuple[f
     structure = 0.6 * _jaccard(hunk_a, hunk_b) + 0.4 * _jaccard(file_a, file_b)
     semantic = max(0.0, _cosine(a.embedding, b.embedding))
 
+    minhash = 0.0
+    simhash = 0.0
+    winnow = 0.0
+    if idx is not None:
+        minhash, simhash, winnow = _advanced_scores(a, b, idx, cfg)
+
     churn_a = max(1, a.additions + a.deletions)
     churn_b = max(1, b.additions + b.deletions)
     size_ratio = max(churn_a, churn_b) / min(churn_a, churn_b)
@@ -94,6 +216,9 @@ def score_pair(a: Fingerprint, b: Fingerprint, cfg: SimilarityConfig) -> tuple[f
         cfg.weight_lineage * lineage
         + cfg.weight_structure * structure
         + cfg.weight_semantic * semantic
+        + cfg.weight_minhash * minhash
+        + cfg.weight_simhash * simhash
+        + cfg.weight_winnow * winnow
         - cfg.size_penalty_weight * size_penalty
     )
 
@@ -101,6 +226,9 @@ def score_pair(a: Fingerprint, b: Fingerprint, cfg: SimilarityConfig) -> tuple[f
         lineage=lineage,
         structure=structure,
         semantic=semantic,
+        minhash=minhash,
+        simhash=simhash,
+        winnow=winnow,
         size_penalty=size_penalty,
         total=total,
     )
@@ -108,22 +236,31 @@ def score_pair(a: Fingerprint, b: Fingerprint, cfg: SimilarityConfig) -> tuple[f
 
 
 def _edge_tier(score: float, breakdown: SimilarityBreakdown, cfg: SimilarityConfig) -> EdgeTier | None:
-    if breakdown.lineage >= cfg.lineage_strong_overlap or score >= cfg.strong_score:
+    if (
+        breakdown.lineage >= cfg.lineage_strong_overlap
+        or score >= cfg.strong_score
+        or breakdown.minhash >= cfg.strong_minhash_min
+        or breakdown.winnow >= cfg.strong_winnow_min
+    ):
         return EdgeTier.STRONG
     if score >= cfg.min_score and (
-        breakdown.structure >= cfg.weak_structure_min or breakdown.semantic >= cfg.weak_semantic_min
+        breakdown.structure >= cfg.weak_structure_min
+        or breakdown.semantic >= cfg.weak_semantic_min
+        or breakdown.minhash >= cfg.weak_minhash_min
+        or breakdown.simhash >= cfg.weak_simhash_min
+        or breakdown.winnow >= cfg.weak_winnow_min
     ):
         return EdgeTier.WEAK
     return None
 
 
 def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: SimilarityConfig) -> list[SimilarityEdge]:
-    idx = build_candidate_index(fingerprints)
+    idx = build_candidate_index(fingerprints, cfg)
     pair_seen: set[tuple[str, str]] = set()
     edges: list[SimilarityEdge] = []
 
     for entity_id, fp in fingerprints.items():
-        candidates = retrieve_candidates(entity_id, fp, idx, cfg.top_k_candidates)
+        candidates = retrieve_candidates(entity_id, fp, idx, cfg)
         for other_id in candidates:
             a, b = sorted((entity_id, other_id))
             pair = (a, b)
@@ -131,7 +268,7 @@ def compute_similarity_edges(fingerprints: dict[str, Fingerprint], cfg: Similari
                 continue
             pair_seen.add(pair)
 
-            score, breakdown = score_pair(fingerprints[a], fingerprints[b], cfg)
+            score, breakdown = score_pair(fingerprints[a], fingerprints[b], cfg, idx=idx)
             tier = _edge_tier(score, breakdown, cfg)
             if tier is None:
                 continue

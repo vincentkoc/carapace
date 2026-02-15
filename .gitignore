@@ -205,3 +205,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Carapace runtime artifacts
+.carapace/
+carapace-out/

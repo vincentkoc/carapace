@@ -14,6 +14,7 @@ low_pass:
   suppress_docs_only_if_no_ci: true
 
 similarity:
+  use_advanced_algorithms: true
   min_score: 0.72
   strong_score: 0.82
   top_k_candidates: 64

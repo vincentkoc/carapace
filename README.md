@@ -10,6 +10,10 @@
   - low-pass filtering (`pass` / `suppress` / `skip`)
   - fingerprinting + embeddings
   - similarity edges + clustering
+  - advanced similarity algorithms:
+    - MinHash + LSH candidate retrieval
+    - SimHash candidate retrieval/similarity
+    - Winnowing fingerprints
   - canonical ranking in each cluster
   - routing decisions (canonical, duplicate, related, suppressed)
 - Report bundle output:

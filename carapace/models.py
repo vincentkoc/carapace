@@ -128,6 +128,9 @@ class SimilarityBreakdown(BaseModel):
     lineage: float
     structure: float
     semantic: float
+    minhash: float = 0.0
+    simhash: float = 0.0
+    winnow: float = 0.0
     size_penalty: float
     total: float
 
