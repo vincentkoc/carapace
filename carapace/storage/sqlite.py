@@ -21,10 +21,14 @@ class SQLiteStorage:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA temp_store = MEMORY")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -97,6 +101,7 @@ class SQLiteStorage:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_state ON ingest_entities(repo, state, is_draft);
+                CREATE INDEX IF NOT EXISTS idx_ingest_entities_repo_kind_state_num ON ingest_entities(repo, kind, state, number);
                 """
             )
 
@@ -199,34 +204,37 @@ class SQLiteStorage:
         if not entities:
             return 0
         now = datetime.now(UTC).isoformat()
+        rows = [
+            (
+                repo,
+                entity.id,
+                entity.kind.value,
+                entity.number,
+                entity.state,
+                1 if entity.is_draft else 0,
+                entity.updated_at.isoformat(),
+                entity.model_dump_json(),
+                now,
+            )
+            for entity in entities
+        ]
         with self._connect() as conn:
-            for entity in entities:
-                conn.execute(
-                    """
-                    INSERT INTO ingest_entities (
-                      repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(repo, entity_id) DO UPDATE SET
-                      kind=excluded.kind,
-                      number=excluded.number,
-                      state=excluded.state,
-                      is_draft=excluded.is_draft,
-                      updated_at=excluded.updated_at,
-                      payload_json=excluded.payload_json,
-                      fetched_at=excluded.fetched_at
-                    """,
-                    (
-                        repo,
-                        entity.id,
-                        entity.kind.value,
-                        entity.number,
-                        entity.state,
-                        1 if entity.is_draft else 0,
-                        entity.updated_at.isoformat(),
-                        entity.model_dump_json(),
-                        now,
-                    ),
-                )
+            conn.executemany(
+                """
+                INSERT INTO ingest_entities (
+                  repo, entity_id, kind, number, state, is_draft, updated_at, payload_json, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo, entity_id) DO UPDATE SET
+                  kind=excluded.kind,
+                  number=excluded.number,
+                  state=excluded.state,
+                  is_draft=excluded.is_draft,
+                  updated_at=excluded.updated_at,
+                  payload_json=excluded.payload_json,
+                  fetched_at=excluded.fetched_at
+                """,
+                rows,
+            )
             conn.commit()
         return len(entities)
 
@@ -334,3 +342,29 @@ class SQLiteStorage:
             "missing_diff_hunks": int(row["missing_diff_hunks"] or 0),
             "ci_unknown": int(row["ci_unknown"] or 0),
         }
+
+    def mark_entities_closed_except(self, repo: str, *, kind: str, seen_entity_ids: set[str]) -> int:
+        with self._connect() as conn:
+            conn.execute("DROP TABLE IF EXISTS temp._seen_ids")
+            conn.execute("CREATE TEMP TABLE _seen_ids (entity_id TEXT PRIMARY KEY)")
+            if seen_entity_ids:
+                conn.executemany(
+                    "INSERT INTO _seen_ids(entity_id) VALUES (?)",
+                    [(entity_id,) for entity_id in sorted(seen_entity_ids)],
+                )
+
+            cursor = conn.execute(
+                """
+                UPDATE ingest_entities
+                SET
+                  state = 'closed',
+                  payload_json = json_set(payload_json, '$.state', 'closed')
+                WHERE repo = ?
+                  AND kind = ?
+                  AND state = 'open'
+                  AND entity_id NOT IN (SELECT entity_id FROM _seen_ids)
+                """,
+                (repo, kind),
+            )
+            conn.commit()
+            return int(cursor.rowcount if cursor.rowcount is not None else 0)

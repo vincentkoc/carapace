@@ -87,3 +87,39 @@ def test_sqlite_ingest_upsert_and_filtering(tmp_path: Path) -> None:
 
     all_entities = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
     assert {entity.id for entity in all_entities} == {"pr:1", "pr:2", "pr:3"}
+
+
+def test_mark_entities_closed_except(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    entities = [
+        SourceEntity.model_validate(
+            {
+                "id": "pr:1",
+                "repo": "acme/repo",
+                "kind": EntityKind.PR,
+                "state": "open",
+                "title": "One",
+                "author": "a",
+            }
+        ),
+        SourceEntity.model_validate(
+            {
+                "id": "pr:2",
+                "repo": "acme/repo",
+                "kind": EntityKind.PR,
+                "state": "open",
+                "title": "Two",
+                "author": "b",
+            }
+        ),
+    ]
+    storage.upsert_ingest_entities("acme/repo", entities)
+    changed = storage.mark_entities_closed_except("acme/repo", kind="pr", seen_entity_ids={"pr:1"})
+    assert changed == 1
+
+    loaded = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
+    state_by_id = {entity.id: entity.state for entity in loaded}
+    assert state_by_id["pr:1"] == "open"
+    assert state_by_id["pr:2"] == "closed"

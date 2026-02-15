@@ -16,6 +16,7 @@ class LowPassConfig(BaseModel):
     soft_suppress_labels: list[str] = Field(default_factory=lambda: ["question", "discussion"])
     skip_closed: bool = True
     skip_drafts: bool = True
+    ignore_recent_pr_hours: int | None = None
     boost_labels: dict[str, float] = Field(default_factory=lambda: {"security": 1.5, "regression": 1.5})
     stale_days: int | None = 90
     suppress_docs_only_if_no_ci: bool = True

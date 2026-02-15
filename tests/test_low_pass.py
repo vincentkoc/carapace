@@ -44,6 +44,13 @@ def test_docs_only_suppression() -> None:
     assert out.state == FilterState.SUPPRESS
 
 
+def test_recent_pr_suppressed() -> None:
+    e = _entity(updated_at=datetime.now(UTC))
+    out = apply_low_pass(e, LowPassConfig(ignore_recent_pr_hours=4))
+    assert out.state == FilterState.SUPPRESS
+    assert "RECENT_PR" in out.reason_codes
+
+
 def test_stale_skips() -> None:
     e = _entity(updated_at=datetime.now(UTC) - timedelta(days=200))
     out = apply_low_pass(e, LowPassConfig(stale_days=90))

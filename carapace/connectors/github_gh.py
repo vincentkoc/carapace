@@ -165,7 +165,9 @@ class GithubGhSourceConnector(SourceConnector):
             entities.append(
                 self._normalize_pull(
                     pull,
-                    enrich_details=enrich_pr_details,
+                    enrich_files=enrich_pr_details,
+                    enrich_reviews=enrich_pr_details,
+                    enrich_ci=enrich_pr_details,
                     enrich_comments=enrich_issue_comments,
                 )
             )
@@ -204,7 +206,9 @@ class GithubGhSourceConnector(SourceConnector):
             entities.append(
                 self._normalize_pull(
                     pull,
-                    enrich_details=enrich_details,
+                    enrich_files=enrich_details,
+                    enrich_reviews=enrich_details,
+                    enrich_ci=enrich_details,
                     enrich_comments=enrich_comments,
                 )
             )
@@ -227,21 +231,51 @@ class GithubGhSourceConnector(SourceConnector):
             payload = self.client._api_json(f"pulls/{number}")
             return self._normalize_pull(
                 GithubPull.model_validate(payload),
-                enrich_details=True,
+                enrich_files=True,
+                enrich_reviews=True,
+                enrich_ci=True,
                 enrich_comments=False,
             )
         payload = self.client._api_json(f"issues/{number}")
         issue = GithubIssue.model_validate(payload)
         return self._normalize_issue(issue)
 
-    def enrich_entity(self, entity: SourceEntity, include_comments: bool = False) -> SourceEntity:
+    def enrich_entity(
+        self,
+        entity: SourceEntity,
+        include_comments: bool = False,
+        mode: str = "minimal",
+    ) -> SourceEntity:
         if entity.kind != EntityKind.PR or entity.number is None:
             return entity
         payload = self.client._api_json(f"pulls/{entity.number}")
+        pull = GithubPull.model_validate(payload)
+        if pull.state != "open":
+            # Closed/reopened transitions should be reflected even if no further enrichment is done.
+            return self._normalize_pull(
+                pull,
+                enrich_files=False,
+                enrich_reviews=False,
+                enrich_ci=False,
+                enrich_comments=False,
+            )
+
+        if mode == "full":
+            return self._normalize_pull(
+                pull,
+                enrich_files=True,
+                enrich_reviews=True,
+                enrich_ci=True,
+                enrich_comments=include_comments,
+            )
+
+        # Minimal mode: changed files + hunks only; skip reviews/CI/comments for speed.
         return self._normalize_pull(
-            GithubPull.model_validate(payload),
-            enrich_details=True,
-            enrich_comments=include_comments,
+            pull,
+            enrich_files=True,
+            enrich_reviews=False,
+            enrich_ci=False,
+            enrich_comments=False,
         )
 
     def get_diff_or_change_set(self, entity_id: str) -> dict:
@@ -269,7 +303,9 @@ class GithubGhSourceConnector(SourceConnector):
         self,
         pull: GithubPull,
         *,
-        enrich_details: bool = True,
+        enrich_files: bool = True,
+        enrich_reviews: bool = True,
+        enrich_ci: bool = True,
         enrich_comments: bool = True,
     ) -> SourceEntity:
         number = pull.number
@@ -282,16 +318,18 @@ class GithubGhSourceConnector(SourceConnector):
         head_sha = pull.head.get("sha")
         ci_status = CIStatus.UNKNOWN
 
-        if enrich_details:
+        if enrich_files:
             files_payload = self.client.get_paginated(f"pulls/{number}/files")
             files = [GithubFile.model_validate(item) for item in files_payload]
             changed_files = [item.filename for item in files]
             diff_hunks = _parse_diff_hunks(files)
 
+        if enrich_reviews:
             reviews_payload = self.client.get_paginated(f"pulls/{number}/reviews")
             reviews = [GithubReview.model_validate(item) for item in reviews_payload]
             approvals = sum(1 for review in reviews if (review.state or "").upper() == "APPROVED")
 
+        if enrich_ci:
             if head_sha:
                 status_payload = self.client._api_json(f"commits/{head_sha}/status") or {}
                 ci_status = _normalize_ci_status(status_payload.get("state"))

@@ -9,6 +9,7 @@ low_pass:
     - discussion
   skip_closed: true
   skip_drafts: true
+  ignore_recent_pr_hours: 4
   boost_labels:
     security: 1.5
     regression: 1.5

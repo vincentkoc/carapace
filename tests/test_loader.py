@@ -84,3 +84,34 @@ def test_loader_is_stateful_and_resumes(tmp_path) -> None:
 
     loaded = storage.load_ingested_entities("acme/repo", include_closed=True, include_drafts=True)
     assert {entity.id for entity in loaded} == {"pr:1", "pr:2"}
+
+
+def test_loader_restarts_from_page_one_after_completed_cycle(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "carapace.db")
+    connector = FakeConnector()
+    cfg = IngestConfig(include_issues=False, page_size=1, resume=True)
+
+    # Full cycle with no caps should complete and mark done.
+    ingest_github_to_sqlite(
+        connector,
+        storage,
+        repo="acme/repo",
+        ingest_cfg=cfg,
+        max_prs=0,
+        max_issues=0,
+    )
+    state = storage.get_ingest_state("acme/repo")
+    assert state["completed"] == 1
+    assert state["phase"] == "done"
+
+    prior_calls = len(connector.pull_calls)
+    ingest_github_to_sqlite(
+        connector,
+        storage,
+        repo="acme/repo",
+        ingest_cfg=cfg,
+        max_prs=0,
+        max_issues=0,
+    )
+    new_calls = connector.pull_calls[prior_calls:]
+    assert new_calls[0][0] == 1

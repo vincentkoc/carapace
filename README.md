@@ -65,6 +65,17 @@ carapace process-stored \
   --output-dir ./carapace-out/openclaw
 ```
 
+Fast enrichment during processing:
+```bash
+carapace --log-level INFO process-stored \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --output-dir ./carapace-out/openclaw \
+  --enrich-missing \
+  --enrich-mode minimal \
+  --enrich-workers 8
+```
+
 Optional routing application:
 ```bash
 # dry run (default)
@@ -89,6 +100,11 @@ Ingest controls live under `ingest`:
 - `resume`
 - `enrich_pr_details`
 - `enrich_issue_comments`
+
+Low-pass controls include:
+- `skip_closed`
+- `skip_drafts`
+- `ignore_recent_pr_hours` (e.g. `4` to suppress very fresh PRs from first-pass analysis)
 
 Repo safety:
 - By default, GitHub commands validate that `--repo-path` git origin matches `--repo`.

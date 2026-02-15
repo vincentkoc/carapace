@@ -29,6 +29,15 @@ def _is_stale(entity: SourceEntity, stale_days: int | None) -> bool:
     return entity.updated_at < cutoff
 
 
+def _is_recent_pr(entity: SourceEntity, ignore_recent_pr_hours: int | None) -> bool:
+    if ignore_recent_pr_hours is None:
+        return False
+    if entity.kind.value != "pr":
+        return False
+    cutoff = datetime.now(UTC) - timedelta(hours=ignore_recent_pr_hours)
+    return entity.updated_at >= cutoff
+
+
 def apply_low_pass(entity: SourceEntity, cfg: LowPassConfig) -> LowPassDecision:
     reasons: list[str] = []
 
@@ -51,6 +60,10 @@ def apply_low_pass(entity: SourceEntity, cfg: LowPassConfig) -> LowPassDecision:
     if _is_stale(entity, cfg.stale_days):
         reasons.append("STALE")
         return LowPassDecision(entity_id=entity.id, state=FilterState.SKIP, reason_codes=reasons, priority_weight=0.0)
+
+    if _is_recent_pr(entity, cfg.ignore_recent_pr_hours):
+        reasons.append("RECENT_PR")
+        return LowPassDecision(entity_id=entity.id, state=FilterState.SUPPRESS, reason_codes=reasons, priority_weight=1.0)
 
     if label_set & soft_suppress:
         reasons.append("SOFT_SUPPRESS_LABEL")

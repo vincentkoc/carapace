@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
@@ -132,6 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="When enriching, also fetch issue comments (slower; needed for external review signal extraction)",
     )
+    process.add_argument(
+        "--enrich-mode",
+        choices=["minimal", "full"],
+        default="minimal",
+        help="Enrichment mode: minimal (files/hunks only) or full (files+reviews+ci+optional comments)",
+    )
+    process.add_argument(
+        "--enrich-workers",
+        type=int,
+        default=6,
+        help="Parallel workers used for enrichment API calls",
+    )
     process.add_argument("--apply-routing", action="store_true", help="Apply labels/comments using routing decisions")
     process.add_argument(
         "--live-actions",
@@ -239,33 +252,66 @@ def _run_process_stored(args: argparse.Namespace) -> int:
     if args.limit > 0:
         entities = entities[: args.limit]
 
-    logger.info("Loaded %s ingested entities for processing", len(entities))
+    pr_count = sum(1 for entity in entities if entity.kind.value == "pr")
+    issue_count = sum(1 for entity in entities if entity.kind.value == "issue")
+    logger.info("Loaded %s ingested entities for processing (prs=%s issues=%s)", len(entities), pr_count, issue_count)
 
     if args.enrich_missing:
         connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
-        enriched: list[SourceEntity] = []
-        targets = 0
-        for entity in entities:
-            needs = entity.kind.value == "pr" and (
-                len(entity.changed_files) == 0 or entity.ci_status.value == "unknown"
-            )
+        targets: list[tuple[int, SourceEntity]] = []
+        for idx, entity in enumerate(entities):
+            needs = entity.kind.value == "pr" and (len(entity.changed_files) == 0 or entity.ci_status.value == "unknown")
             if needs:
-                targets += 1
+                targets.append((idx, entity))
         if targets:
-            logger.info("Enriching %s PR entities with missing details", targets)
-        for idx, entity in enumerate(entities, start=1):
-            needs = entity.kind.value == "pr" and (
-                len(entity.changed_files) == 0 or entity.ci_status.value == "unknown"
+            logger.info(
+                "Enriching %s PR entities with missing details (mode=%s workers=%s)",
+                len(targets),
+                args.enrich_mode,
+                args.enrich_workers,
             )
-            if needs:
-                entity = connector.enrich_entity(entity, include_comments=args.enrich_comments)
-            enriched.append(entity)
-            if idx % 100 == 0 or idx == len(entities):
-                logger.debug("Enrichment progress: %s/%s", idx, len(entities))
-        entities = enriched
-        if targets:
-            storage.upsert_ingest_entities(args.repo, entities)
+
+            changed_entities: list[SourceEntity] = []
+
+            def _enrich_one(target: tuple[int, SourceEntity]) -> tuple[int, SourceEntity]:
+                entity_index, entity_obj = target
+                try:
+                    enriched_entity = connector.enrich_entity(
+                        entity_obj,
+                        include_comments=args.enrich_comments,
+                        mode=args.enrich_mode,
+                    )
+                    return entity_index, enriched_entity
+                except Exception as exc:  # pragma: no cover - network/runtime dependent
+                    message = str(exc)
+                    if "404" in message and entity_obj.kind.value == "pr":
+                        logger.debug("PR %s resolved as closed during enrichment", entity_obj.id)
+                        return entity_index, entity_obj.model_copy(update={"state": "closed"})
+                    logger.warning("Failed to enrich %s: %s", entity_obj.id, exc)
+                    return entity_index, entity_obj
+
+            completed = 0
+            with ThreadPoolExecutor(max_workers=max(1, args.enrich_workers)) as pool:
+                future_to_target = {pool.submit(_enrich_one, target): target for target in targets}
+                for future in as_completed(future_to_target):
+                    entity_index, enriched_entity = future.result()
+                    entities[entity_index] = enriched_entity
+                    changed_entities.append(enriched_entity)
+                    completed += 1
+                    if completed % 50 == 0 or completed == len(targets):
+                        logger.debug("Enrichment progress: %s/%s", completed, len(targets))
+
+            storage.upsert_ingest_entities(args.repo, changed_entities)
             logger.info("Persisted enriched entity data back to SQLite")
+
+    # Re-apply state filters after enrichment may have changed PR state (e.g. closed during processing).
+    entities = [
+        entity
+        for entity in entities
+        if (config.ingest.include_closed or entity.state == "open")
+        and (config.ingest.include_drafts or not entity.is_draft)
+    ]
+    logger.info("Entities after post-enrichment state filtering: %s", len(entities))
 
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
