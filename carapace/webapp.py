@@ -95,6 +95,83 @@ def _node_size_from_priority(priority: float) -> float:
     return max(12.0, min(80.0, 12.0 + (priority * 1.5)))
 
 
+def _build_ingest_linkage_summaries(repo: str, entities: list[SourceEntity]) -> list[ClusterSummary]:
+    if not entities:
+        return []
+
+    entity_by_id = {entity.id: entity for entity in entities}
+    issue_by_number = {str(entity.number): entity.id for entity in entities if entity.kind.value == "issue" and entity.number is not None}
+
+    parent = {entity.id: entity.id for entity in entities}
+
+    def find(item: str) -> str:
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left: str, right: str) -> None:
+        root_left = find(left)
+        root_right = find(right)
+        if root_left == root_right:
+            return
+        parent[root_right] = root_left
+
+    for entity in entities:
+        refs = set(entity.linked_issues) | set(entity.soft_linked_issues)
+        for ref in refs:
+            target = issue_by_number.get(ref)
+            if target is not None and target != entity.id:
+                union(entity.id, target)
+
+    components: dict[str, list[str]] = defaultdict(list)
+    for entity_id in parent:
+        components[find(entity_id)].append(entity_id)
+
+    summaries: list[ClusterSummary] = []
+    counter = 0
+    for members in components.values():
+        if len(members) < 2:
+            continue
+        counter += 1
+        ordered_members = sorted(members)
+        pr_members = [entity_by_id[mid] for mid in ordered_members if entity_by_id[mid].kind.value == "pr"]
+        issue_members = [entity_by_id[mid] for mid in ordered_members if entity_by_id[mid].kind.value == "issue"]
+        if pr_members and issue_members:
+            cluster_type = "linked_pair" if len(ordered_members) == 2 else "duplicate_candidate"
+        elif pr_members:
+            cluster_type = "duplicate_candidate"
+        elif issue_members:
+            cluster_type = "duplicate_candidate"
+        else:
+            cluster_type = "mixed_pair"
+
+        canonical_pr = max(pr_members, key=lambda item: item.updated_at).id if pr_members else None
+        canonical_issue = max(issue_members, key=lambda item: item.updated_at).id if issue_members else None
+        canonical = canonical_pr or canonical_issue
+
+        issue_attention = sum(_issue_attention(item) for item in issue_members)
+        duplicate_pressure = max(0, len(ordered_members) - 1)
+        priority = (issue_attention * 0.45) + (len(ordered_members) * 0.35) + (duplicate_pressure * 0.20)
+
+        summaries.append(
+            ClusterSummary(
+                cluster_id=f"ingest-cluster-{counter}",
+                cluster_type=cluster_type,
+                members=ordered_members,
+                canonical=canonical,
+                canonical_pr=canonical_pr,
+                canonical_issue=canonical_issue,
+                priority=priority,
+                issue_attention=issue_attention,
+                duplicate_pressure=float(duplicate_pressure),
+            )
+        )
+
+    summaries.sort(key=lambda item: (item.priority, len(item.members)), reverse=True)
+    return summaries
+
+
 def _filter_cluster_summaries(
     summaries: list[ClusterSummary],
     *,
@@ -223,6 +300,101 @@ def _build_cluster_map_payload(
     }
 
 
+def _build_cluster_map_from_summaries(
+    *,
+    repo: str,
+    summaries: list[ClusterSummary],
+    entities: dict[str, SourceEntity],
+    kind: str,
+    min_members: int,
+    max_clusters: int,
+    max_bridges: int,
+    mode: str,
+) -> dict[str, Any]:
+    chosen = _filter_cluster_summaries(
+        summaries,
+        kind=kind,
+        min_members=min_members,
+        max_clusters=max_clusters,
+    )
+    if not chosen:
+        return {
+            "repo": repo,
+            "mode": mode,
+            "node_count": 0,
+            "edge_count": 0,
+            "elements": {"nodes": [], "edges": []},
+        }
+
+    nodes = [
+        {
+            "data": {
+                "id": summary.cluster_id,
+                "kind": "cluster",
+                "label": summary.cluster_id,
+                "cluster_type": summary.cluster_type,
+                "member_count": len(summary.members),
+                "priority": round(summary.priority, 3),
+                "canonical": summary.canonical,
+                "size": max(12.0, min(64.0, 12.0 + (len(summary.members) * 4.0))),
+            }
+        }
+        for summary in chosen
+    ]
+
+    chosen_ids = {summary.cluster_id for summary in chosen}
+    cluster_authors: dict[str, set[str]] = {}
+    cluster_refs: dict[str, set[str]] = {}
+    for summary in chosen:
+        authors: set[str] = set()
+        refs: set[str] = set()
+        for entity_id in summary.members:
+            entity = entities.get(entity_id)
+            if entity is None:
+                continue
+            authors.add(entity.author)
+            refs.update(entity.linked_issues)
+            refs.update(entity.soft_linked_issues)
+            if entity.kind.value == "issue" and entity.number is not None:
+                refs.add(str(entity.number))
+        cluster_authors[summary.cluster_id] = authors
+        cluster_refs[summary.cluster_id] = refs
+
+    bridge_weights: dict[tuple[str, str], float] = defaultdict(float)
+    chosen_list = sorted(chosen_ids)
+    for idx, left in enumerate(chosen_list):
+        for right in chosen_list[idx + 1 :]:
+            shared_authors = cluster_authors[left] & cluster_authors[right]
+            shared_refs = cluster_refs[left] & cluster_refs[right]
+            if shared_authors:
+                bridge_weights[(left, right)] += 0.8 * len(shared_authors)
+            if shared_refs:
+                bridge_weights[(left, right)] += 1.2 * len(shared_refs)
+
+    sorted_pairs = sorted(bridge_weights.items(), key=lambda item: item[1], reverse=True)[:max_bridges]
+    edges = [
+        {
+            "data": {
+                "id": f"cluster-bridge:{left}:{right}",
+                "source": left,
+                "target": right,
+                "kind": "cluster_bridge",
+                "weight": round(weight, 3),
+            }
+        }
+        for (left, right), weight in sorted_pairs
+        if weight > 0
+    ]
+
+    return {
+        "repo": repo,
+        "mode": mode,
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "elements": {"nodes": nodes, "edges": edges},
+    }
+
+
 def _build_cluster_detail_payload(
     *,
     repo: str,
@@ -345,6 +517,130 @@ def _build_cluster_detail_payload(
             "canonical_pr": summary.canonical_pr if summary else None,
             "canonical_issue": summary.canonical_issue if summary else None,
             "priority": round(summary.priority, 3) if summary else 0.0,
+        },
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "elements": {"nodes": nodes, "edges": edges},
+    }
+
+
+def _build_ingest_cluster_detail_payload(
+    *,
+    repo: str,
+    summary: ClusterSummary,
+    entities: dict[str, SourceEntity],
+    author_cache: dict[str, dict[str, float | int | str]],
+    include_authors: bool,
+) -> dict[str, Any]:
+    include_ids = sorted(summary.members)
+    issue_index = {entity.number: entity.id for entity in entities.values() if entity.kind.value == "issue" and entity.number is not None}
+
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    author_nodes: set[str] = set()
+    entity_set = set(include_ids)
+
+    for entity_id in include_ids:
+        entity = entities.get(entity_id)
+        if entity is None:
+            continue
+        trust_cache = author_cache.get(entity.author, {})
+        trust_score = max(_association_trust(entity.author_association), float(trust_cache.get("trust_score", 0.0) or 0.0))
+        nodes.append(
+            {
+                "data": {
+                    "id": entity.id,
+                    "kind": entity.kind.value,
+                    "label": entity.title,
+                    "author": entity.author,
+                    "state": entity.state,
+                    "shadow": False,
+                    "trust_score": round(trust_score, 3),
+                    "size": 17 if entity.kind.value == "pr" else 15,
+                }
+            }
+        )
+
+        if include_authors:
+            author_id = f"author:{entity.author}"
+            if author_id not in author_nodes:
+                author_nodes.add(author_id)
+                nodes.append(
+                    {
+                        "data": {
+                            "id": author_id,
+                            "kind": "author",
+                            "label": entity.author,
+                            "size": 10 + (trust_score * 8),
+                            "trust_score": round(trust_score, 3),
+                        }
+                    }
+                )
+            edges.append(
+                {
+                    "data": {
+                        "id": f"ingest-detail-authored:{entity.id}:{author_id}",
+                        "source": entity.id,
+                        "target": author_id,
+                        "kind": "authored_by",
+                        "weight": round(trust_score, 3),
+                    }
+                }
+            )
+
+        refs = set(entity.linked_issues) | set(entity.soft_linked_issues)
+        for ref in refs:
+            if not ref.isdigit():
+                continue
+            issue_id = issue_index.get(int(ref))
+            if issue_id and issue_id in entity_set and issue_id != entity.id:
+                edges.append(
+                    {
+                        "data": {
+                            "id": f"ingest-detail-ref:{entity.id}:{issue_id}:{ref}",
+                            "source": entity.id,
+                            "target": issue_id,
+                            "kind": "references",
+                            "weight": 1.0,
+                        }
+                    }
+                )
+
+    # Soft cohesion edge for same-author members in ingest fallback detail.
+    for idx, left in enumerate(include_ids):
+        left_entity = entities.get(left)
+        if left_entity is None:
+            continue
+        for right in include_ids[idx + 1 :]:
+            right_entity = entities.get(right)
+            if right_entity is None:
+                continue
+            if left_entity.author == right_entity.author:
+                edges.append(
+                    {
+                        "data": {
+                            "id": f"ingest-detail-author-link:{left}:{right}",
+                            "source": left,
+                            "target": right,
+                            "kind": "similarity",
+                            "weight": 0.6,
+                            "tier": "weak",
+                        }
+                    }
+                )
+
+    return {
+        "repo": repo,
+        "mode": "cluster_detail_ingest",
+        "cluster": {
+            "id": summary.cluster_id,
+            "cluster_type": summary.cluster_type,
+            "member_count": len(summary.members),
+            "shadow_count": 0,
+            "canonical": summary.canonical,
+            "canonical_pr": summary.canonical_pr,
+            "canonical_issue": summary.canonical_issue,
+            "priority": round(summary.priority, 3),
         },
         "node_count": len(nodes),
         "edge_count": len(edges),
@@ -705,6 +1001,19 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         author_cache = storage.get_author_metrics_cache(repo, authors)
         return report, entities, summaries, author_cache
 
+    def _load_ingest_context(repo: str) -> tuple[dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]:
+        ingest_entities = storage.load_ingested_entities(
+            repo,
+            include_closed=False,
+            include_drafts=False,
+            kind=None,
+        )
+        entities = {entity.id: entity for entity in ingest_entities}
+        summaries = _build_ingest_linkage_summaries(repo, ingest_entities)
+        authors = sorted({entity.author for entity in ingest_entities})
+        author_cache = storage.get_author_metrics_cache(repo, authors)
+        return entities, summaries, author_cache
+
     @app.get("/", response_class=HTMLResponse)
     def ui_index(request: Request, repo: str | None = None) -> HTMLResponse:
         selected_repo = _repo_or_default(repo)
@@ -725,11 +1034,26 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         min_members: int = Query(default=2, ge=1),
         limit: int = Query(default=150, ge=1, le=1000),
     ) -> HTMLResponse:
-        report, entities, summaries, _ = _load_context(repo)
-        _ = report
+        try:
+            _report, entities, summaries, _ = _load_context(repo)
+        except HTTPException:
+            entities, summaries, _ = _load_ingest_context(repo)
 
-        filtered = [summary for summary in summaries if len(summary.members) >= min_members and (kind == "all" or summary.cluster_type == kind)]
-        filtered = filtered[:limit]
+        filtered = _filter_cluster_summaries(
+            summaries,
+            kind=kind,
+            min_members=min_members,
+            max_clusters=limit,
+        )
+        if not filtered:
+            ingest_entities, ingest_summaries, _ = _load_ingest_context(repo)
+            entities = ingest_entities
+            filtered = _filter_cluster_summaries(
+                ingest_summaries,
+                kind=kind,
+                min_members=min_members,
+                max_clusters=limit,
+            )
 
         cluster_entity_titles: dict[str, list[str]] = {}
         for summary in filtered:
@@ -820,17 +1144,42 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         max_clusters: int = Query(default=120, ge=10, le=2000),
         max_bridges: int = Query(default=800, ge=0, le=5000),
     ) -> JSONResponse:
-        report, entities, summaries, _ = _load_context(repo)
-        payload = _build_cluster_map_payload(
-            repo=repo,
-            report=report,
-            entities=entities,
-            summaries=summaries,
-            kind=kind,
-            min_members=min_members,
-            max_clusters=max_clusters,
-            max_bridges=max_bridges,
-        )
+        try:
+            report, entities, summaries, _ = _load_context(repo)
+            payload = _build_cluster_map_payload(
+                repo=repo,
+                report=report,
+                entities=entities,
+                summaries=summaries,
+                kind=kind,
+                min_members=min_members,
+                max_clusters=max_clusters,
+                max_bridges=max_bridges,
+            )
+            if payload["node_count"] == 0:
+                entities, ingest_summaries, _ = _load_ingest_context(repo)
+                payload = _build_cluster_map_from_summaries(
+                    repo=repo,
+                    summaries=ingest_summaries,
+                    entities=entities,
+                    kind=kind,
+                    min_members=min_members,
+                    max_clusters=max_clusters,
+                    max_bridges=max_bridges,
+                    mode="cluster_map_ingest",
+                )
+        except HTTPException:
+            entities, ingest_summaries, _ = _load_ingest_context(repo)
+            payload = _build_cluster_map_from_summaries(
+                repo=repo,
+                summaries=ingest_summaries,
+                entities=entities,
+                kind=kind,
+                min_members=min_members,
+                max_clusters=max_clusters,
+                max_bridges=max_bridges,
+                mode="cluster_map_ingest",
+            )
         return JSONResponse(payload)
 
     @app.get("/api/repos/{repo:path}/clusters", response_class=JSONResponse)
@@ -840,13 +1189,26 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         min_members: int = Query(default=2, ge=1),
         limit: int = Query(default=200, ge=1, le=2000),
     ) -> JSONResponse:
-        _report, _entities, summaries, _author_cache = _load_context(repo)
+        try:
+            _report, _entities, summaries, _author_cache = _load_context(repo)
+        except HTTPException:
+            _entities, summaries, _author_cache = _load_ingest_context(repo)
         rows: list[dict[str, Any]] = []
-        for summary in summaries:
-            if len(summary.members) < min_members:
-                continue
-            if kind != "all" and summary.cluster_type != kind:
-                continue
+        selected = _filter_cluster_summaries(
+            summaries,
+            kind=kind,
+            min_members=min_members,
+            max_clusters=limit,
+        )
+        if not selected:
+            _entities, ingest_summaries, _author_cache = _load_ingest_context(repo)
+            selected = _filter_cluster_summaries(
+                ingest_summaries,
+                kind=kind,
+                min_members=min_members,
+                max_clusters=limit,
+            )
+        for summary in selected:
             rows.append(
                 {
                     "cluster_id": summary.cluster_id,
@@ -860,8 +1222,6 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     "duplicate_pressure": round(summary.duplicate_pressure, 3),
                 }
             )
-            if len(rows) >= limit:
-                break
         return JSONResponse({"repo": repo, "clusters": rows})
 
     @app.get("/api/repos/{repo:path}/clusters/{cluster_id}/detail", response_class=JSONResponse)
@@ -871,23 +1231,52 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         min_edge_score: float = Query(default=0.20, ge=0.0, le=1.0),
         include_authors: bool = Query(default=False),
     ) -> JSONResponse:
-        report, entities, summaries, author_cache = _load_context(repo)
-        payload = _build_cluster_detail_payload(
-            repo=repo,
-            report=report,
-            entities=entities,
-            summaries=summaries,
-            author_cache=author_cache,
-            cluster_id=cluster_id,
-            min_edge_score=min_edge_score,
-            include_authors=include_authors,
-        )
+        payload: dict[str, Any]
+        try:
+            report, entities, summaries, author_cache = _load_context(repo)
+            if cluster_id.startswith("ingest-cluster-"):
+                ingest_entities, ingest_summaries, ingest_author_cache = _load_ingest_context(repo)
+                summary = next((item for item in ingest_summaries if item.cluster_id == cluster_id), None)
+                if summary is None:
+                    raise HTTPException(status_code=404, detail=f"Unknown cluster id: {cluster_id}")
+                payload = _build_ingest_cluster_detail_payload(
+                    repo=repo,
+                    summary=summary,
+                    entities=ingest_entities,
+                    author_cache=ingest_author_cache,
+                    include_authors=include_authors,
+                )
+            else:
+                payload = _build_cluster_detail_payload(
+                    repo=repo,
+                    report=report,
+                    entities=entities,
+                    summaries=summaries,
+                    author_cache=author_cache,
+                    cluster_id=cluster_id,
+                    min_edge_score=min_edge_score,
+                    include_authors=include_authors,
+                )
+        except HTTPException:
+            ingest_entities, ingest_summaries, ingest_author_cache = _load_ingest_context(repo)
+            summary = next((item for item in ingest_summaries if item.cluster_id == cluster_id), None)
+            if summary is None:
+                raise
+            payload = _build_ingest_cluster_detail_payload(
+                repo=repo,
+                summary=summary,
+                entities=ingest_entities,
+                author_cache=ingest_author_cache,
+                include_authors=include_authors,
+            )
         return JSONResponse(payload)
 
     @app.get("/api/repos/{repo:path}/authors", response_class=JSONResponse)
     def api_authors(repo: str, limit: int = Query(default=100, ge=1, le=1000)) -> JSONResponse:
-        report, entities, _summaries, author_cache = _load_context(repo)
-        _ = report
+        try:
+            _report, entities, _summaries, author_cache = _load_context(repo)
+        except HTTPException:
+            entities, _summaries, author_cache = _load_ingest_context(repo)
         by_author: dict[str, dict[str, Any]] = defaultdict(lambda: {"open_prs": 0, "open_issues": 0, "association": None, "trust_score": 0.0})
         for entity in entities.values():
             row = by_author[entity.author]

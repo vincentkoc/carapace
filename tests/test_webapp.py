@@ -115,6 +115,12 @@ def test_webapp_graph_falls_back_to_ingest_when_run_has_no_multi_clusters(tmp_pa
     payload_with_authors = graph_with_authors.json()
     assert payload_with_authors["node_count"] >= 2  # issue + author node
 
+    cluster_map = client.get(f"/api/repos/{repo}/graph/cluster-map")
+    assert cluster_map.status_code == 200
+    cluster_map_payload = cluster_map.json()
+    assert cluster_map_payload["mode"] == "cluster_map_ingest"
+    assert cluster_map_payload["node_count"] == 0
+
 
 def test_webapp_factory_from_env_loads_repo_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("fastapi")
@@ -158,3 +164,59 @@ storage:
     client = TestClient(app)
     res = client.get("/api/repos/openclaw/openclaw/graph")
     assert res.status_code == 200
+
+
+def test_webapp_cluster_detail_from_ingest_without_runs(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from carapace.webapp import create_app
+
+    db_path = tmp_path / "carapace.db"
+    repo = "openclaw/openclaw"
+    storage = SQLiteStorage(db_path)
+    config = CarapaceConfig(storage=StorageConfig(persist_runs=True, sqlite_path=str(db_path)))
+
+    entities = [
+        SourceEntity.model_validate(
+            {
+                "id": "issue:10",
+                "repo": repo,
+                "kind": EntityKind.ISSUE,
+                "state": "open",
+                "number": 10,
+                "title": "Bug report",
+                "author": "alice",
+            }
+        ),
+        SourceEntity.model_validate(
+            {
+                "id": "pr:11",
+                "repo": repo,
+                "kind": EntityKind.PR,
+                "state": "open",
+                "number": 11,
+                "title": "Fix bug",
+                "body": "Fixes #10",
+                "author": "bob",
+                "linked_issues": ["10"],
+            }
+        ),
+    ]
+    storage.upsert_ingest_entities(repo, entities)
+
+    app = create_app(config)
+    client = TestClient(app)
+
+    clusters = client.get(f"/api/repos/{repo}/clusters?min_members=2")
+    assert clusters.status_code == 200
+    rows = clusters.json()["clusters"]
+    assert rows
+    cid = rows[0]["cluster_id"]
+    assert cid.startswith("ingest-cluster-")
+
+    detail = client.get(f"/api/repos/{repo}/clusters/{cid}/detail")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["mode"] == "cluster_detail_ingest"
+    assert payload["node_count"] >= 2
