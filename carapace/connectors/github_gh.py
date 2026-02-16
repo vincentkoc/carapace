@@ -734,11 +734,10 @@ def _extract_lineage(commits_payload: list[dict[str, Any]]) -> tuple[list[str], 
             commits.append(sha)
             seen_commits.add(sha)
 
-        message = ((commit_obj.commit.get("message") or "").strip().splitlines() or [""])[0]
-        token = message if message else sha
-        if not token:
+        # Use commit SHA as the lineage token to avoid collisions from generic commit messages.
+        if not sha:
             continue
-        patch_like_id = _stable_patch_like_id(token)
+        patch_like_id = _stable_patch_like_id(sha)
         if patch_like_id in seen_patch_ids:
             continue
         patch_ids.append(patch_like_id)

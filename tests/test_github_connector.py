@@ -3,7 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from carapace.connectors.github_gh import GithubGhClient, GithubGhSinkConnector, GithubGhSourceConnector, GithubRateLimitError, _extract_score_from_text
+from carapace.connectors.github_gh import (
+    GithubGhClient,
+    GithubGhSinkConnector,
+    GithubGhSourceConnector,
+    GithubRateLimitError,
+    _extract_lineage,
+    _extract_score_from_text,
+)
 from carapace.models import CIStatus, EntityKind, SourceEntity
 
 
@@ -122,6 +129,18 @@ def test_extract_score_from_text() -> None:
     assert _extract_score_from_text("quality 72%") == 0.72
     assert _extract_score_from_text("result 85/100") == 0.85
     assert _extract_score_from_text("no score") == 0.5
+
+
+def test_extract_lineage_uses_sha_not_commit_message() -> None:
+    commits, patch_ids = _extract_lineage(
+        [
+            {"sha": "abc123", "commit": {"message": "fix: update docs"}},
+            {"sha": "def456", "commit": {"message": "fix: update docs"}},
+        ]
+    )
+    assert commits == ["abc123", "def456"]
+    assert len(patch_ids) == 2
+    assert patch_ids[0] != patch_ids[1]
 
 
 def test_github_connector_includes_issues_and_skips_issue_pr_mirror() -> None:
