@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from carapace.canonical import rank_canonicals
@@ -21,6 +21,7 @@ from carapace.models import (
     EngineReport,
     FilterState,
     Fingerprint,
+    Cluster,
     LowPassDecision,
     RoutingDecision,
     SourceEntity,
@@ -88,6 +89,7 @@ class CarapaceEngine:
 
         low_pass: dict[str, LowPassDecision] = {}
         active_entities: list[SourceEntity] = []
+        shadow_entities: list[SourceEntity] = []
         suppressed = 0
         skipped = 0
 
@@ -98,8 +100,10 @@ class CarapaceEngine:
                 active_entities.append(entity)
             elif decision.state == FilterState.SUPPRESS:
                 suppressed += 1
+                shadow_entities.append(entity)
             else:
                 skipped += 1
+                shadow_entities.append(entity)
 
         reason_counts: Counter[str] = Counter()
         for decision in low_pass.values():
@@ -237,17 +241,24 @@ class CarapaceEngine:
             edges,
             tail_prune_score=self.config.similarity.cluster_tail_prune_score,
         )
+        shadow_context_entities = self._attach_shadow_context(
+            clusters=clusters,
+            shadow_entities=shadow_entities,
+            fingerprints=fingerprints,
+        )
         self.hooks.emit(HookName.AFTER_SIMILARITY, context, {"edges": len(edges), "clusters": len(clusters)})
         logger.debug(
-            "Similarity complete: edges=%s clusters=%s in %.2fs",
+            "Similarity complete: edges=%s clusters=%s shadow_attached=%s in %.2fs",
             len(edges),
             len(clusters),
+            shadow_context_entities,
             time.perf_counter() - sim_start,
         )
         logger.info(
-            "Similarity complete: edges=%s clusters=%s in %.2fs",
+            "Similarity complete: edges=%s clusters=%s shadow_attached=%s in %.2fs",
             len(edges),
             len(clusters),
+            shadow_context_entities,
             time.perf_counter() - sim_start,
         )
         sim_elapsed = time.perf_counter() - sim_start
@@ -292,6 +303,7 @@ class CarapaceEngine:
                 "active_entities": len(active_entities),
                 "suppressed_entities": suppressed,
                 "skipped_entities": skipped,
+                "shadow_context_entities": shadow_context_entities,
                 "fingerprint_cache_hits": fingerprint_cache_hits,
                 "fingerprint_cache_misses": fingerprint_cache_misses,
                 "similarity_candidate_links": sim_stats.candidate_links_generated,
@@ -404,6 +416,59 @@ class CarapaceEngine:
             )
 
         return routing
+
+    @staticmethod
+    def _attach_shadow_context(
+        *,
+        clusters: list[Cluster],
+        shadow_entities: list[SourceEntity],
+        fingerprints: dict[str, Fingerprint],
+    ) -> int:
+        if not clusters or not shadow_entities:
+            return 0
+
+        cluster_by_id = {cluster.id: cluster for cluster in clusters}
+        cluster_refs: dict[str, set[str]] = defaultdict(set)
+        for cluster in clusters:
+            refs = cluster_refs[cluster.id]
+            for member_id in cluster.members:
+                fp = fingerprints.get(member_id)
+                if fp is None:
+                    continue
+                refs.update(fp.linked_issues)
+                refs.update(fp.soft_linked_issues)
+
+        ref_index: dict[str, set[str]] = defaultdict(set)
+        for cluster_id, refs in cluster_refs.items():
+            for ref in refs:
+                ref_index[ref].add(cluster_id)
+
+        attached = 0
+        attached_seen: dict[str, set[str]] = defaultdict(set)
+        for entity in shadow_entities:
+            refs = set(entity.linked_issues) | set(entity.soft_linked_issues)
+            if entity.kind.value == "issue" and entity.number is not None:
+                refs.add(str(entity.number))
+            if not refs:
+                continue
+
+            votes: Counter[str] = Counter()
+            for ref in refs:
+                votes.update(ref_index.get(ref, set()))
+            if not votes:
+                continue
+
+            cluster_id, _ = sorted(votes.items(), key=lambda item: (-item[1], item[0]))[0]
+            if entity.id in attached_seen[cluster_id]:
+                continue
+            cluster = cluster_by_id.get(cluster_id)
+            if cluster is None:
+                continue
+            cluster.shadow_members.append(entity.id)
+            attached_seen[cluster_id].add(entity.id)
+            attached += 1
+
+        return attached
 
     @staticmethod
     def _storage_from_config(config: CarapaceConfig) -> StorageBackend | None:

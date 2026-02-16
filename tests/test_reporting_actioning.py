@@ -154,3 +154,30 @@ def test_render_markdown_report_omits_singleton_orphans_by_default() -> None:
     assert "## cluster-1" not in markdown
     assert "singleton_orphan=1" in markdown
     assert "Omitted 1 singleton_orphan clusters" in markdown
+
+
+def test_render_markdown_report_includes_shadow_context_line() -> None:
+    report = EngineReport(
+        processed_entities=2,
+        active_entities=1,
+        suppressed_entities=1,
+        skipped_entities=0,
+        clusters=[Cluster(id="cluster-1", members=["pr:1"], shadow_members=["issue:9"], cluster_type="related_group")],
+        edges=[],
+        canonical_decisions=[
+            CanonicalDecision(
+                cluster_id="cluster-1",
+                canonical_entity_id="pr:1",
+                canonical_pr_entity_id="pr:1",
+                member_decisions=[MemberDecision(entity_id="pr:1", state=DecisionState.CANONICAL, score=1.0)],
+            )
+        ],
+        low_pass=[],
+        routing=[],
+    )
+    entities = [
+        SourceEntity(id="pr:1", repo="acme/repo", kind=EntityKind.PR, title="Fix one", author="alice"),
+        SourceEntity(id="issue:9", repo="acme/repo", kind=EntityKind.ISSUE, title="Duplicate", author="bob"),
+    ]
+    markdown = render_markdown_report(report, entities=entities, include_singleton_orphans=True)
+    assert "Shadow context (1): issue:9" in markdown

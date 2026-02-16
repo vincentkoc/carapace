@@ -191,3 +191,42 @@ def test_linked_pair_cluster_gets_linked_pair_label() -> None:
     assert "triage/linked-pair" in routing["pr:101"]
     assert "triage/canonical" not in routing["issue:101"]
     assert "triage/canonical" not in routing["pr:101"]
+
+
+def test_shadow_context_attaches_suppressed_entities_by_issue_reference() -> None:
+    cfg = CarapaceConfig.model_validate(
+        {
+            "low_pass": {
+                "hard_skip_labels": ["duplicate"],
+            }
+        }
+    )
+    active_pr = SourceEntity.model_validate(
+        {
+            "id": "pr:200",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "number": 200,
+            "title": "Fix routing crash",
+            "body": "Fixes #200",
+            "author": "bob",
+            "linked_issues": ["200"],
+            "changed_files": ["src/routing.py"],
+        }
+    )
+    skipped_issue = SourceEntity.model_validate(
+        {
+            "id": "issue:200",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "number": 200,
+            "title": "Duplicate report",
+            "body": "Same issue",
+            "author": "alice",
+            "labels": ["duplicate"],
+        }
+    )
+
+    report = CarapaceEngine(config=cfg).scan_entities([active_pr, skipped_issue])
+    cluster = next(cluster for cluster in report.clusters if "pr:200" in cluster.members)
+    assert "issue:200" in cluster.shadow_members

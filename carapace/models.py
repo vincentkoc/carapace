@@ -173,6 +173,7 @@ class Cluster(BaseModel):
     id: str
     members: list[str]
     cluster_type: str = "generic"
+    shadow_members: list[str] = Field(default_factory=list)
 
 
 class MemberDecision(BaseModel):

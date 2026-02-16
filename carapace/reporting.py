@@ -114,6 +114,10 @@ def render_markdown_report(
         lines.append(f"## {decision.cluster_id}")
         lines.append("")
         lines.append(f"- Type: {cluster_type}")
+        if cluster and cluster.shadow_members:
+            preview = ", ".join(_display_entity(entity_id, titles) for entity_id in cluster.shadow_members[:6])
+            suffix = " ..." if len(cluster.shadow_members) > 6 else ""
+            lines.append(f"- Shadow context ({len(cluster.shadow_members)}): {preview}{suffix}")
         lines.append(f"- Canonical: {_display_entity(decision.canonical_entity_id, titles)}")
         if decision.canonical_pr_entity_id:
             lines.append(f"- Canonical PR: {_display_entity(decision.canonical_pr_entity_id, titles)}")
