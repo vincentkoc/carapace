@@ -496,6 +496,7 @@
       function triagePage() {
         return {
           repo: {{ repo|tojson }},
+          apiBase: "/api/v1",
           kind: "all",
           minMembers: 2,
           maxClusters: 120,
@@ -1176,6 +1177,10 @@
             return await res.json();
           },
 
+          apiPath(repo, suffix) {
+            return `${this.apiBase}/repos/${encodeURIComponent(repo)}${suffix}`;
+          },
+
           async reloadAll() {
             this.statusLine = "loading...";
             try {
@@ -1198,7 +1203,7 @@
               min_members: String(this.minMembers),
               limit: String(this.maxClusters),
             });
-            const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters?${params.toString()}`);
+            const payload = await this.fetchJSON(this.apiPath(this.repo, `/clusters?${params.toString()}`));
             this.allClusters = payload.clusters || [];
             this.applyQueueFilter();
           },
@@ -1214,7 +1219,7 @@
               max_nodes: String(this.atlasMaxNodes),
             });
             try {
-              const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/graph/atlas?${params.toString()}`);
+              const payload = await this.fetchJSON(this.apiPath(this.repo, `/graph/atlas?${params.toString()}`));
               this.mapMode = payload.mode || "embedding_atlas";
               this.mapStats = `${payload.node_count} nodes / ${payload.edge_count} edges (${payload.mode})`;
               const graph = this.makeGraph(payload.elements, { mode: "atlas" });
@@ -1239,7 +1244,7 @@
               include_authors: String(this.includeAuthors),
             });
             try {
-              const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters/${encodeURIComponent(this.selectedClusterId)}/detail?${params.toString()}`);
+              const payload = await this.fetchJSON(this.apiPath(this.repo, `/clusters/${encodeURIComponent(this.selectedClusterId)}/detail?${params.toString()}`));
               const c = payload.cluster || {};
               const canonicalSummary = [c.canonical_pr, c.canonical_issue].filter(Boolean).join(" / ");
               this.detailStats = `${payload.node_count} nodes / ${payload.edge_count} edges — ${c.cluster_type || ""}${canonicalSummary ? ` — ${canonicalSummary}` : ""}`;

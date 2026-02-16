@@ -1339,6 +1339,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             },
         )
 
+    @app.get("/api/v1/repos/{repo:path}/graph", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/graph", response_class=JSONResponse)
     def api_graph(
         repo: str,
@@ -1399,6 +1400,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             )
         return JSONResponse(payload)
 
+    @app.get("/api/v1/repos/{repo:path}/graph/cluster-map", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/graph/cluster-map", response_class=JSONResponse)
     def api_cluster_map(
         repo: str,
@@ -1445,6 +1447,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             )
         return JSONResponse(payload)
 
+    @app.get("/api/v1/repos/{repo:path}/graph/atlas", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/graph/atlas", response_class=JSONResponse)
     def api_embedding_atlas(
         repo: str,
@@ -1518,6 +1521,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         )
         return JSONResponse(payload)
 
+    @app.get("/api/v1/repos/{repo:path}/clusters", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/clusters", response_class=JSONResponse)
     def api_clusters(
         repo: str,
@@ -1562,6 +1566,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             )
         return JSONResponse({"repo": repo, "clusters": rows})
 
+    @app.get("/api/v1/repos/{repo:path}/clusters/{cluster_id}/detail", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/clusters/{cluster_id}/detail", response_class=JSONResponse)
     def api_cluster_detail(
         repo: str,
@@ -1609,6 +1614,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             )
         return JSONResponse(payload)
 
+    @app.get("/api/v1/repos/{repo:path}/authors", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/authors", response_class=JSONResponse)
     def api_authors(repo: str, limit: int = Query(default=100, ge=1, le=1000)) -> JSONResponse:
         try:
