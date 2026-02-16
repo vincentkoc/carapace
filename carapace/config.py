@@ -85,6 +85,9 @@ class SimilarityConfig(BaseModel):
     unstructured_pr_title_overlap_min: float = 0.95
     unstructured_pr_semantic_text_min: float = 0.58
     unstructured_pr_simhash_min: float = 0.64
+    broad_pr_min_files: int = 10
+    broad_pr_title_overlap_min: float = 0.20
+    broad_pr_semantic_text_min: float = 0.55
     minhash_num_perm: int = 64
     minhash_bands: int = 8
     minhash_shingle_k: int = 3

@@ -354,3 +354,33 @@ def test_unstructured_pr_pairs_with_near_identical_titles_can_link() -> None:
     edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
     assert len(edges) == 1
     assert edges[0].tier.value in {"weak", "strong"}
+
+
+def test_broad_scope_pr_pairs_with_low_title_and_semantic_are_blocked() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True, broad_pr_min_files=10, broad_pr_title_overlap_min=0.2, broad_pr_semantic_text_min=0.55)
+    files = [f"src/{idx}.py" for idx in range(12)]
+    hunks = [f"h{idx}" for idx in range(12)]
+    a = _fp(
+        "pr:1",
+        files=files,
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=hunks,
+        embedding=[1.0, 0.0],
+        tokens=["cron", "timer", "schedule"],
+        title_tokens=["cron", "timer"],
+    )
+    b = _fp(
+        "pr:2",
+        files=files,
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=hunks,
+        embedding=[0.0, 1.0],
+        tokens=["telegram", "oauth", "token"],
+        title_tokens=["telegram", "oauth"],
+    )
+    edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
+    assert edges == []

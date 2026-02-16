@@ -372,10 +372,25 @@ def _edge_tier(
     cfg: SimilarityConfig,
     entity_a_id: str,
     entity_b_id: str,
+    fp_a: Fingerprint,
+    fp_b: Fingerprint,
 ) -> EdgeTier | None:
     kind_a = entity_a_id.split(":", maxsplit=1)[0]
     kind_b = entity_b_id.split(":", maxsplit=1)[0]
     is_issue_pr = {kind_a, kind_b} == {"issue", "pr"}
+    broad_pr_pair = (
+        kind_a == "pr"
+        and kind_b == "pr"
+        and len(fp_a.changed_files) >= cfg.broad_pr_min_files
+        and len(fp_b.changed_files) >= cfg.broad_pr_min_files
+    )
+    if (
+        broad_pr_pair
+        and breakdown.hard_link_overlap <= 0.0
+        and breakdown.title_salient_overlap < cfg.broad_pr_title_overlap_min
+        and breakdown.semantic_text < cfg.broad_pr_semantic_text_min
+    ):
+        return None
 
     if breakdown.hard_link_overlap >= cfg.hard_link_strong_overlap:
         if breakdown.lineage > 0.0 or breakdown.structure >= cfg.weak_structure_min:
@@ -457,7 +472,7 @@ def compute_similarity_edges_with_stats(
             stats.unique_pairs_scored += 1
 
             score, breakdown = score_pair(fingerprints[a], fingerprints[b], cfg, idx=idx)
-            tier = _edge_tier(score, breakdown, cfg, a, b)
+            tier = _edge_tier(score, breakdown, cfg, a, b, fingerprints[a], fingerprints[b])
             if tier is None:
                 continue
 
