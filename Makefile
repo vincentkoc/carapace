@@ -26,14 +26,19 @@ fi
 endef
 
 .DEFAULT_GOAL := help
+REPO ?= openclaw/openclaw
+REPO_PATH ?= /Users/vincentkoc/GIT/_Perso/openclaw
+UI_HOST ?= 127.0.0.1
+UI_PORT ?= 8765
 
-.PHONY: help setup-venv install install-dev test lint format mypy check precommit-install precommit clean
+.PHONY: help setup-venv install install-dev install-ui test lint format mypy check precommit-install precommit serve-ui serve-ui-reload clean
 
 help:
 	@echo "Available targets:"
 	@echo "  setup-venv        Create virtual environment in $(VENV)"
 	@echo "  install           Install package"
 	@echo "  install-dev       Install package with dev dependencies"
+	@echo "  install-ui        Install package with dev + UI dependencies"
 	@echo "  test              Run test suite"
 	@echo "  lint              Run Ruff checks"
 	@echo "  format            Apply Ruff fixes and formatting"
@@ -41,6 +46,8 @@ help:
 	@echo "  check             Run lint + mypy + tests"
 	@echo "  precommit-install Install git pre-commit hooks"
 	@echo "  precommit         Run all pre-commit hooks"
+	@echo "  serve-ui          Run FastAPI UI (repo=$(REPO), path=$(REPO_PATH))"
+	@echo "  serve-ui-reload   Run FastAPI UI with hot reload"
 	@echo "  clean             Remove local caches and artifacts"
 
 setup-venv:
@@ -53,6 +60,10 @@ install:
 install-dev:
 	$(call warn_if_no_venv)
 	$(PIP) install -e ".[dev]"
+
+install-ui:
+	$(call warn_if_no_venv)
+	$(PIP) install -e ".[dev,ui]"
 
 test:
 	$(call warn_if_no_venv)
@@ -80,6 +91,25 @@ precommit-install:
 precommit:
 	$(call warn_if_no_venv)
 	$(PRECOMMIT) run --all-files
+
+serve-ui:
+	$(call warn_if_no_venv)
+	$(PYTHON) -m carapace.cli serve-ui \
+		--repo $(REPO) \
+		--repo-path $(REPO_PATH) \
+		--skip-repo-path-check \
+		--host $(UI_HOST) \
+		--port $(UI_PORT)
+
+serve-ui-reload:
+	$(call warn_if_no_venv)
+	$(PYTHON) -m carapace.cli serve-ui \
+		--repo $(REPO) \
+		--repo-path $(REPO_PATH) \
+		--skip-repo-path-check \
+		--host $(UI_HOST) \
+		--port $(UI_PORT) \
+		--reload
 
 clean:
 	@rm -rf build dist .pytest_cache .mypy_cache .ruff_cache
