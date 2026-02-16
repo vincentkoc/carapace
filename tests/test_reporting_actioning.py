@@ -7,8 +7,10 @@ from carapace.models import (
     Cluster,
     DecisionState,
     EngineReport,
+    EntityKind,
     MemberDecision,
     RoutingDecision,
+    SourceEntity,
 )
 from carapace.reporting import render_markdown_report, write_report_bundle
 
@@ -69,7 +71,15 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
     assert "# Carapace Triage Report" in markdown
     assert "Canonical: pr:1" in markdown
 
-    write_report_bundle(report, tmp_path)
+    entities = [
+        SourceEntity(id="pr:1", repo="acme/repo", kind=EntityKind.PR, title="Fix one", author="alice"),
+        SourceEntity(id="pr:2", repo="acme/repo", kind=EntityKind.PR, title="Fix two", author="bob"),
+    ]
+    markdown_with_titles = render_markdown_report(report, entities=entities)
+    assert 'Canonical: pr:1 — "Fix one"' in markdown_with_titles
+    assert 'pr:2 — "Fix two"' in markdown_with_titles
+
+    write_report_bundle(report, tmp_path, entities=entities)
     assert (tmp_path / "triage_report.md").exists()
     assert (tmp_path / "clusters.json").exists()
     assert (tmp_path / "labels_to_apply.json").exists()
@@ -78,6 +88,8 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
     labels_payload = json.loads((tmp_path / "labels_to_apply.json").read_text())
     assert labels_payload["pr:2"]["queue_key"] == "quarantine"
     assert labels_payload["pr:2"]["close"] is True
+    triage = (tmp_path / "triage_report.md").read_text()
+    assert 'Canonical: pr:1 — "Fix one"' in triage
 
 
 def test_apply_routing_decisions_invokes_sink_methods() -> None:

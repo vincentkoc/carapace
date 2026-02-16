@@ -5,10 +5,26 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from carapace.models import EngineReport
+from carapace.models import EngineReport, SourceEntity
 
 
-def render_markdown_report(report: EngineReport) -> str:
+def _entity_titles(entities: list[SourceEntity] | None) -> dict[str, str]:
+    if not entities:
+        return {}
+    return {entity.id: entity.title for entity in entities}
+
+
+def _display_entity(entity_id: str | None, titles: dict[str, str]) -> str:
+    if not entity_id:
+        return "none"
+    title = titles.get(entity_id, "").strip()
+    if not title:
+        return entity_id
+    return f'{entity_id} — "{title}"'
+
+
+def render_markdown_report(report: EngineReport, entities: list[SourceEntity] | None = None) -> str:
+    titles = _entity_titles(entities)
     lines: list[str] = []
     lines.append("# Carapace Triage Report")
     lines.append("")
@@ -23,17 +39,17 @@ def render_markdown_report(report: EngineReport) -> str:
     for decision in report.canonical_decisions:
         lines.append(f"## {decision.cluster_id}")
         lines.append("")
-        lines.append(f"- Canonical: {decision.canonical_entity_id or 'none'}")
+        lines.append(f"- Canonical: {_display_entity(decision.canonical_entity_id, titles)}")
         for member in sorted(decision.member_decisions, key=lambda item: item.score, reverse=True):
             state = member.state.value
             extra = f" duplicate_of={member.duplicate_of}" if member.duplicate_of else ""
-            lines.append(f"- {member.entity_id}: state={state} score={member.score:.3f}{extra}")
+            lines.append(f"- {_display_entity(member.entity_id, titles)}: state={state} score={member.score:.3f}{extra}")
         lines.append("")
 
     return "\n".join(lines)
 
 
-def write_report_bundle(report: EngineReport, output_dir: str | Path) -> None:
+def write_report_bundle(report: EngineReport, output_dir: str | Path, entities: list[SourceEntity] | None = None) -> None:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -49,5 +65,5 @@ def write_report_bundle(report: EngineReport, output_dir: str | Path) -> None:
         for entry in report.routing
     }
     (out / "labels_to_apply.json").write_text(json.dumps(labels_payload, indent=2))
-    (out / "triage_report.md").write_text(render_markdown_report(report))
+    (out / "triage_report.md").write_text(render_markdown_report(report, entities=entities))
     (out / "scan_profile.json").write_text(json.dumps(report.profile, indent=2))

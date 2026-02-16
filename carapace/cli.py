@@ -268,7 +268,7 @@ def _run_scan(args: argparse.Namespace) -> int:
     config = _load_config(args)
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, args.output_dir)
+    write_report_bundle(report, args.output_dir, entities=entities)
     logger.info("Scan complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
     return 0
 
@@ -536,7 +536,7 @@ def _run_process_stored(args: argparse.Namespace) -> int:
 
     engine = _build_engine(config, storage=storage)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, args.output_dir)
+    write_report_bundle(report, args.output_dir, entities=entities)
     _maybe_apply_routing(args, entities, report)
 
     logger.info("Process complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
@@ -594,7 +594,7 @@ def _run_scan_github(args: argparse.Namespace) -> int:
 
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, out_dir)
+    write_report_bundle(report, out_dir, entities=entities)
     _maybe_apply_routing(args, entities, report)
     logger.info("One-shot scan complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
     return 0
