@@ -66,6 +66,7 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
     assert clusters.status_code == 200
     cluster_rows = clusters.json().get("clusters", [])
     assert cluster_rows
+    assert "canonical_title" in cluster_rows[0]
 
     detail = client.get(f"/api/repos/{repo}/clusters/{cluster_rows[0]['cluster_id']}/detail")
     assert detail.status_code == 200
@@ -212,6 +213,7 @@ def test_webapp_cluster_detail_from_ingest_without_runs(tmp_path: Path) -> None:
     assert clusters.status_code == 200
     rows = clusters.json()["clusters"]
     assert rows
+    assert rows[0]["canonical_title"] is not None
     cid = rows[0]["cluster_id"]
     assert cid.startswith("ingest-cluster-")
 

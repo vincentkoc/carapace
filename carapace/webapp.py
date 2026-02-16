@@ -95,6 +95,15 @@ def _node_size_from_priority(priority: float) -> float:
     return max(12.0, min(80.0, 12.0 + (priority * 1.5)))
 
 
+def _canonical_title(canonical_id: str | None, entities: dict[str, SourceEntity]) -> str | None:
+    if not canonical_id:
+        return None
+    entity = entities.get(canonical_id)
+    if entity is None:
+        return None
+    return entity.title
+
+
 def _build_ingest_linkage_summaries(repo: str, entities: list[SourceEntity]) -> list[ClusterSummary]:
     if not entities:
         return []
@@ -214,12 +223,16 @@ def _build_cluster_map_payload(
 
     nodes: list[dict[str, Any]] = []
     for summary in chosen:
+        canonical_title = _canonical_title(summary.canonical, entities)
         nodes.append(
             {
                 "data": {
                     "id": summary.cluster_id,
                     "kind": "cluster",
                     "label": summary.cluster_id,
+                    "short_label": summary.cluster_id,
+                    "canonical_id": summary.canonical,
+                    "canonical_title": canonical_title,
                     "cluster_type": summary.cluster_type,
                     "member_count": len(summary.members),
                     "priority": round(summary.priority, 3),
@@ -332,6 +345,9 @@ def _build_cluster_map_from_summaries(
                 "id": summary.cluster_id,
                 "kind": "cluster",
                 "label": summary.cluster_id,
+                "short_label": summary.cluster_id,
+                "canonical_id": summary.canonical,
+                "canonical_title": _canonical_title(summary.canonical, entities),
                 "cluster_type": summary.cluster_type,
                 "member_count": len(summary.members),
                 "priority": round(summary.priority, 3),
@@ -410,6 +426,7 @@ def _build_cluster_detail_payload(
     if cluster is None:
         raise HTTPException(status_code=404, detail=f"Unknown cluster id: {cluster_id}")
     summary = next((item for item in summaries if item.cluster_id == cluster_id), None)
+    canonical_id = summary.canonical if summary else None
 
     member_ids = set(cluster.members)
     shadow_ids = set(cluster.shadow_members)
@@ -433,6 +450,7 @@ def _build_cluster_detail_payload(
                     "id": entity.id,
                     "kind": entity.kind.value,
                     "label": entity.title,
+                    "canonical": entity.id == canonical_id,
                     "author": entity.author,
                     "state": entity.state,
                     "shadow": is_shadow,
@@ -552,6 +570,7 @@ def _build_ingest_cluster_detail_payload(
                     "id": entity.id,
                     "kind": entity.kind.value,
                     "label": entity.title,
+                    "canonical": entity.id == summary.canonical,
                     "author": entity.author,
                     "state": entity.state,
                     "shadow": False,
@@ -1190,9 +1209,9 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         limit: int = Query(default=200, ge=1, le=2000),
     ) -> JSONResponse:
         try:
-            _report, _entities, summaries, _author_cache = _load_context(repo)
+            _report, entities, summaries, _author_cache = _load_context(repo)
         except HTTPException:
-            _entities, summaries, _author_cache = _load_ingest_context(repo)
+            entities, summaries, _author_cache = _load_ingest_context(repo)
         rows: list[dict[str, Any]] = []
         selected = _filter_cluster_summaries(
             summaries,
@@ -1201,7 +1220,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             max_clusters=limit,
         )
         if not selected:
-            _entities, ingest_summaries, _author_cache = _load_ingest_context(repo)
+            entities, ingest_summaries, _author_cache = _load_ingest_context(repo)
             selected = _filter_cluster_summaries(
                 ingest_summaries,
                 kind=kind,
@@ -1209,6 +1228,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 max_clusters=limit,
             )
         for summary in selected:
+            canonical_title = _canonical_title(summary.canonical, entities)
             rows.append(
                 {
                     "cluster_id": summary.cluster_id,
@@ -1216,6 +1236,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     "priority": round(summary.priority, 3),
                     "member_count": len(summary.members),
                     "canonical": summary.canonical,
+                    "canonical_title": canonical_title,
                     "canonical_pr": summary.canonical_pr,
                     "canonical_issue": summary.canonical_issue,
                     "issue_attention": round(summary.issue_attention, 3),
