@@ -58,6 +58,8 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
 
     graph = client.get(f"/api/repos/{repo}/graph")
     assert graph.status_code == 200
+    graph_v1 = client.get(f"/api/v1/repos/{repo}/graph")
+    assert graph_v1.status_code == 200
 
     atlas = client.get(f"/api/repos/{repo}/graph/atlas")
     assert atlas.status_code == 200
@@ -70,6 +72,8 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
 
     clusters = client.get(f"/api/repos/{repo}/clusters?min_members=1")
     assert clusters.status_code == 200
+    clusters_v1 = client.get(f"/api/v1/repos/{repo}/clusters?min_members=1")
+    assert clusters_v1.status_code == 200
     cluster_rows = clusters.json().get("clusters", [])
     assert cluster_rows
     assert "canonical_title" in cluster_rows[0]
