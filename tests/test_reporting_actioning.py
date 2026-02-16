@@ -73,6 +73,7 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
     markdown = render_markdown_report(report)
     assert "# Carapace Triage Report" in markdown
     assert "Canonical: pr:1" in markdown
+    assert "- Type: generic" in markdown
 
     entities = [
         SourceEntity(
@@ -127,3 +128,29 @@ def test_apply_routing_decisions_invokes_sink_methods() -> None:
     assert len(sink.comments) == 1
     assert len(sink.routes) == 1
     assert sink.closed == ["pr:2"]
+
+
+def test_render_markdown_report_omits_singleton_orphans_by_default() -> None:
+    report = EngineReport(
+        processed_entities=1,
+        active_entities=1,
+        suppressed_entities=0,
+        skipped_entities=0,
+        clusters=[Cluster(id="cluster-1", members=["issue:1"], cluster_type="singleton_orphan")],
+        edges=[],
+        canonical_decisions=[
+            CanonicalDecision(
+                cluster_id="cluster-1",
+                canonical_entity_id="issue:1",
+                canonical_issue_entity_id="issue:1",
+                member_decisions=[MemberDecision(entity_id="issue:1", state=DecisionState.CANONICAL, score=1.0)],
+            )
+        ],
+        low_pass=[],
+        routing=[],
+    )
+
+    markdown = render_markdown_report(report)
+    assert "## cluster-1" not in markdown
+    assert "singleton_orphan=1" in markdown
+    assert "Omitted 1 singleton_orphan clusters" in markdown
