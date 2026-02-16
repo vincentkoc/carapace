@@ -56,6 +56,8 @@ class GithubPull(BaseModel):
     author_association: str | None = None
     state: str = "open"
     draft: bool = False
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
 
 
 class GithubIssue(BaseModel):
@@ -517,6 +519,8 @@ class GithubGhSourceConnector(SourceConnector):
             is_bot=(pull.user.type or "").lower() == "bot" or pull.user.login.endswith("[bot]"),
             base_branch=pull.base.get("ref"),
             head_branch=pull.head.get("ref"),
+            mergeable=pull.mergeable,
+            mergeable_state=pull.mergeable_state,
             linked_issues=linked_issues,
             soft_linked_issues=soft_linked_issues,
             changed_files=changed_files,

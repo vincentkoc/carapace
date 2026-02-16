@@ -4,10 +4,12 @@ from pathlib import Path
 from carapace.actioning import apply_routing_decisions
 from carapace.models import (
     CanonicalDecision,
+    CIStatus,
     Cluster,
     DecisionState,
     EngineReport,
     EntityKind,
+    ExternalReviewSignal,
     MemberDecision,
     RoutingDecision,
     SourceEntity,
@@ -50,6 +52,7 @@ def _report() -> EngineReport:
             CanonicalDecision(
                 cluster_id="cluster-1",
                 canonical_entity_id="pr:1",
+                canonical_pr_entity_id="pr:1",
                 member_decisions=[
                     MemberDecision(entity_id="pr:1", state=DecisionState.CANONICAL, score=5.0),
                     MemberDecision(entity_id="pr:2", state=DecisionState.DUPLICATE, score=4.0, duplicate_of="pr:1"),
@@ -72,12 +75,36 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
     assert "Canonical: pr:1" in markdown
 
     entities = [
-        SourceEntity(id="pr:1", repo="acme/repo", kind=EntityKind.PR, title="Fix one", author="alice"),
-        SourceEntity(id="pr:2", repo="acme/repo", kind=EntityKind.PR, title="Fix two", author="bob"),
+        SourceEntity(
+            id="pr:1",
+            repo="acme/repo",
+            kind=EntityKind.PR,
+            title="Fix one",
+            author="alice",
+            mergeable=True,
+            ci_status=CIStatus.PASS,
+            approvals=2,
+            external_reviews=[ExternalReviewSignal(provider="greptile", overall_score=0.8)],
+        ),
+        SourceEntity(
+            id="pr:2",
+            repo="acme/repo",
+            kind=EntityKind.PR,
+            title="Fix two",
+            author="bob",
+            mergeable=False,
+            mergeable_state="dirty",
+            ci_status=CIStatus.UNKNOWN,
+            external_reviews=[ExternalReviewSignal(provider="coderabbit", overall_score=0.9)],
+        ),
     ]
     markdown_with_titles = render_markdown_report(report, entities=entities)
     assert 'Canonical: pr:1 — "Fix one"' in markdown_with_titles
+    assert 'Canonical PR: pr:1 — "Fix one"' in markdown_with_titles
     assert 'pr:2 — "Fix two"' in markdown_with_titles
+    assert "mergeable=yes" in markdown_with_titles
+    assert "greptile=0.80" in markdown_with_titles
+    assert "coderabbit=0.90" in markdown_with_titles
 
     write_report_bundle(report, tmp_path, entities=entities)
     assert (tmp_path / "triage_report.md").exists()

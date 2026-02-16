@@ -28,6 +28,8 @@ class FakeGhClient:
                     "created_at": "2026-02-14T10:00:00Z",
                     "updated_at": "2026-02-15T10:00:00Z",
                     "author_association": "CONTRIBUTOR",
+                    "mergeable": True,
+                    "mergeable_state": "clean",
                 }
             ]
 
@@ -109,6 +111,8 @@ def test_github_connector_normalizes_pr() -> None:
     assert len(pr.diff_hunks) == 1
     assert pr.commits == ["deadbeef1", "deadbeef2"]
     assert len(pr.patch_ids) == 2
+    assert pr.mergeable is True
+    assert pr.mergeable_state == "clean"
     assert pr.external_reviews[0].provider == "coderabbit"
     assert pr.external_reviews[0].overall_score == 0.82
 

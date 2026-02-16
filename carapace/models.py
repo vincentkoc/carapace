@@ -81,6 +81,8 @@ class SourceEntity(BaseModel):
     is_bot: bool = False
     base_branch: str | None = None
     head_branch: str | None = None
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
     linked_issues: list[str] = Field(default_factory=list)
     soft_linked_issues: list[str] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
@@ -187,6 +189,8 @@ class CanonicalDecision(BaseModel):
 
     cluster_id: str
     canonical_entity_id: str | None
+    canonical_pr_entity_id: str | None = None
+    canonical_issue_entity_id: str | None = None
     member_decisions: list[MemberDecision]
 
 

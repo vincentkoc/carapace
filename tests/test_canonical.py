@@ -159,8 +159,11 @@ def test_mixed_kind_cluster_marks_related_not_duplicate() -> None:
     }
     edges = [_edge("issue:1", "pr:1", score=0.9)]
     decision = rank_canonicals(clusters, fingerprints, edges, low_pass, CanonicalConfig(duplicate_threshold=0.1))[0]
-    non_canonical = next(item for item in decision.member_decisions if item.entity_id != decision.canonical_entity_id)
-    assert non_canonical.state == DecisionState.RELATED
+    assert decision.canonical_pr_entity_id == "pr:1"
+    assert decision.canonical_issue_entity_id == "issue:1"
+    by_id = {item.entity_id: item for item in decision.member_decisions}
+    assert by_id["pr:1"].state == DecisionState.CANONICAL
+    assert by_id["issue:1"].state == DecisionState.CANONICAL
 
 
 def test_file_only_overlap_stays_related_without_strong_evidence() -> None:
