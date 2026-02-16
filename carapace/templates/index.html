@@ -10,6 +10,8 @@
     <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
     <style>
       :root {
+        --sidebar-width: 380px;
+        --top-panel-height: 43vh;
         --bg: #f3f4f7;
         --bg-accent: #ebeef7;
         --panel: #fcfdff;
@@ -55,7 +57,7 @@
 
       .layout {
         display: grid;
-        grid-template-columns: 380px 1fr;
+        grid-template-columns: var(--sidebar-width) 8px minmax(0, 1fr);
         height: 100vh;
       }
 
@@ -69,8 +71,38 @@
 
       .main {
         display: grid;
-        grid-template-rows: auto minmax(280px, 43vh) minmax(280px, 1fr);
+        grid-template-rows: auto minmax(220px, var(--top-panel-height)) 8px minmax(220px, 1fr);
         min-height: 0;
+      }
+
+      .splitter {
+        position: relative;
+        background: color-mix(in srgb, var(--line) 65%, transparent);
+        z-index: 5;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+      }
+
+      .splitter::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: transparent;
+        transition: background 100ms ease;
+      }
+
+      .splitter:hover::after,
+      .splitter.active::after {
+        background: color-mix(in srgb, var(--accent) 18%, transparent);
+      }
+
+      .splitter-vertical {
+        cursor: col-resize;
+      }
+
+      .splitter-horizontal {
+        cursor: row-resize;
       }
 
       .toolbar {
@@ -325,6 +357,13 @@
 
         <div class="empty" x-show="clusters.length===0">No clusters match current filters.</div>
       </aside>
+      <div
+        id="splitter-vertical"
+        class="splitter splitter-vertical"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+      ></div>
 
       <main class="main">
         <div class="toolbar">
@@ -360,6 +399,13 @@
           </div>
           <div id="cluster-map" class="graph"></div>
         </section>
+        <div
+          id="splitter-horizontal"
+          class="splitter splitter-horizontal"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize top and bottom graphs"
+        ></div>
 
         <section class="graph-wrap">
           <div class="graph-title">
@@ -396,6 +442,7 @@
           detailSigma: null,
           mapGraph: null,
           detailGraph: null,
+          _splittersReady: false,
           statusLine: "",
           mapStats: "",
           detailStats: "",
@@ -404,10 +451,85 @@
           detailHelp: "Canonical nodes are gold. Text density increases as you zoom in.",
 
           init() {
+            this.initSplitters();
             this.reloadAll();
             window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
               this.refreshRenderers();
             });
+          },
+
+          clamp(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+          },
+
+          initSplitters() {
+            if (this._splittersReady) return;
+            const root = document.documentElement;
+            const layout = document.querySelector(".layout");
+            const main = document.querySelector(".main");
+            const sidebar = document.querySelector(".sidebar");
+            const topGraphSection = document.querySelector(".main .graph-wrap");
+            const vertical = document.getElementById("splitter-vertical");
+            const horizontal = document.getElementById("splitter-horizontal");
+            if (!layout || !main || !sidebar || !vertical || !horizontal || !topGraphSection) return;
+
+            const savedSidebar = Number.parseFloat(localStorage.getItem("carapace.sidebar_width") || "");
+            if (Number.isFinite(savedSidebar)) {
+              root.style.setProperty("--sidebar-width", `${this.clamp(savedSidebar, 260, 820)}px`);
+            }
+            const savedTop = Number.parseFloat(localStorage.getItem("carapace.top_panel_height") || "");
+            if (Number.isFinite(savedTop)) {
+              const topMax = Math.max(280, window.innerHeight - 220);
+              root.style.setProperty("--top-panel-height", `${this.clamp(savedTop, 220, topMax)}px`);
+            }
+
+            const onDrag = (event, mode, startValue) => {
+              if (mode === "vertical") {
+                const sidebarMax = Math.max(360, window.innerWidth - 320);
+                const width = this.clamp(startValue + event.clientX, 260, sidebarMax);
+                root.style.setProperty("--sidebar-width", `${width}px`);
+                return width;
+              }
+              const topMax = Math.max(280, window.innerHeight - 220);
+              const height = this.clamp(startValue + event.clientY, 220, topMax);
+              root.style.setProperty("--top-panel-height", `${height}px`);
+              return height;
+            };
+
+            const attach = (splitter, mode) => {
+              splitter.addEventListener("pointerdown", (event) => {
+                event.preventDefault();
+                splitter.classList.add("active");
+                const base = mode === "vertical"
+                  ? sidebar.getBoundingClientRect().width - event.clientX
+                  : topGraphSection.getBoundingClientRect().height - event.clientY;
+
+                const move = (moveEvent) => {
+                  onDrag(moveEvent, mode, base);
+                };
+
+                const up = (upEvent) => {
+                  const finalValue = onDrag(upEvent, mode, base);
+                  splitter.classList.remove("active");
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                  if (mode === "vertical") {
+                    localStorage.setItem("carapace.sidebar_width", String(finalValue));
+                  } else {
+                    localStorage.setItem("carapace.top_panel_height", String(finalValue));
+                  }
+                  if (this.mapSigma) this.mapSigma.refresh();
+                  if (this.detailSigma) this.detailSigma.refresh();
+                };
+
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up);
+              });
+            };
+
+            attach(vertical, "vertical");
+            attach(horizontal, "horizontal");
+            this._splittersReady = true;
           },
 
           palette() {
