@@ -151,6 +151,16 @@ class SQLiteStorage:
                   PRIMARY KEY (repo, author)
                 );
                 CREATE INDEX IF NOT EXISTS idx_author_metrics_cache_repo_trust ON author_metrics_cache(repo, trust_score DESC);
+
+                CREATE TABLE IF NOT EXISTS json_cache (
+                  repo TEXT NOT NULL,
+                  cache_key TEXT NOT NULL,
+                  source_signature TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  generated_at TEXT NOT NULL,
+                  PRIMARY KEY (repo, cache_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_json_cache_repo_generated ON json_cache(repo, generated_at DESC);
                 """
             )
             self._ensure_ingest_columns(conn)
@@ -700,6 +710,105 @@ class SQLiteStorage:
             )
             conn.commit()
         return len(rows)
+
+    def load_latest_run_embeddings(
+        self,
+        repo: str,
+        entity_ids: list[str] | None = None,
+    ) -> tuple[int | None, dict[str, list[float]]]:
+        with self._connect() as conn:
+            run_row = conn.execute(
+                """
+                SELECT r.id AS run_id
+                FROM runs r
+                INNER JOIN entities e ON e.run_id = r.id
+                WHERE e.repo = ?
+                GROUP BY r.id
+                ORDER BY r.id DESC
+                LIMIT 1
+                """,
+                (repo,),
+            ).fetchone()
+            if run_row is None:
+                return None, {}
+            run_id = int(run_row["run_id"])
+
+            sql = """
+                SELECT em.entity_id, em.vector_json
+                FROM embeddings em
+                INNER JOIN entities en ON en.run_id = em.run_id AND en.entity_id = em.entity_id
+                WHERE em.run_id = ? AND en.repo = ?
+            """
+            params: list[object] = [run_id, repo]
+            if entity_ids:
+                placeholders = ",".join("?" for _ in entity_ids)
+                sql += f" AND em.entity_id IN ({placeholders})"
+                params.extend(entity_ids)
+            rows = conn.execute(sql, tuple(params)).fetchall()
+
+        vectors: dict[str, list[float]] = {}
+        for row in rows:
+            try:
+                parsed = json.loads(row["vector_json"])
+            except Exception:
+                continue
+            if isinstance(parsed, list):
+                vectors[row["entity_id"]] = [float(value) for value in parsed]
+        return run_id, vectors
+
+    def load_json_cache(
+        self,
+        repo: str,
+        cache_key: str,
+        *,
+        source_signature: str,
+    ) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT payload_json
+                FROM json_cache
+                WHERE repo = ? AND cache_key = ? AND source_signature = ?
+                LIMIT 1
+                """,
+                (repo, cache_key, source_signature),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def upsert_json_cache(
+        self,
+        repo: str,
+        cache_key: str,
+        *,
+        source_signature: str,
+        payload: dict,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO json_cache (
+                  repo, cache_key, source_signature, payload_json, generated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(repo, cache_key) DO UPDATE SET
+                  source_signature=excluded.source_signature,
+                  payload_json=excluded.payload_json,
+                  generated_at=excluded.generated_at
+                """,
+                (
+                    repo,
+                    cache_key,
+                    source_signature,
+                    json.dumps(payload, separators=(",", ":")),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            conn.commit()
 
     def ingest_audit_summary(self, repo: str) -> dict:
         with self._connect() as conn:

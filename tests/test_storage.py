@@ -418,3 +418,66 @@ def test_author_metrics_cache_roundtrip(tmp_path: Path) -> None:
     assert float(cache["alice"]["trust_score"]) == 0.93
     assert cache["bob"]["merged_pr_count"] == 3
     assert "carol" not in cache
+
+
+def test_load_latest_run_embeddings_returns_vectors(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+    config = CarapaceConfig(storage=StorageConfig(persist_runs=True, sqlite_path=str(db_path)))
+    entities = [
+        SourceEntity.model_validate(
+            {
+                "id": "pr:1",
+                "repo": "acme/repo",
+                "kind": EntityKind.PR,
+                "state": "open",
+                "title": "Fix bug",
+                "body": "Fixes #12",
+                "author": "alice",
+                "number": 1,
+                "changed_files": ["src/a.py"],
+            }
+        ),
+        SourceEntity.model_validate(
+            {
+                "id": "issue:12",
+                "repo": "acme/repo",
+                "kind": EntityKind.ISSUE,
+                "state": "open",
+                "title": "Bug",
+                "body": "Something broke",
+                "author": "bob",
+                "number": 12,
+            }
+        ),
+    ]
+    storage.upsert_ingest_entities("acme/repo", entities)
+    engine = CarapaceEngine(config=config, storage=storage)
+    _ = engine.scan_entities(entities)
+
+    run_id, vectors = storage.load_latest_run_embeddings("acme/repo")
+    assert run_id is not None
+    assert "pr:1" in vectors
+    assert len(vectors["pr:1"]) > 0
+
+    _, filtered_vectors = storage.load_latest_run_embeddings("acme/repo", entity_ids=["pr:1"])
+    assert set(filtered_vectors.keys()) == {"pr:1"}
+
+
+def test_json_cache_roundtrip_with_signature(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    assert storage.load_json_cache("acme/repo", "atlas:default", source_signature="sig-a") is None
+
+    payload = {"node_count": 2, "edge_count": 1, "elements": {"nodes": [], "edges": []}}
+    storage.upsert_json_cache(
+        "acme/repo",
+        "atlas:default",
+        source_signature="sig-a",
+        payload=payload,
+    )
+
+    cached = storage.load_json_cache("acme/repo", "atlas:default", source_signature="sig-a")
+    assert cached == payload
+    assert storage.load_json_cache("acme/repo", "atlas:default", source_signature="sig-b") is None

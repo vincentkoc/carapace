@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from carapace.config import CarapaceConfig, load_effective_config
+from carapace.embeddings.local_hash import LocalHashEmbeddingProvider
 from carapace.models import EngineReport, SourceEntity
 from carapace.storage import SQLiteStorage
 
@@ -667,6 +671,197 @@ def _build_ingest_cluster_detail_payload(
     }
 
 
+def _entity_signal_score(
+    entity: SourceEntity,
+    *,
+    canonical: bool,
+    cluster_size: int,
+) -> float:
+    comments = int(entity.metadata.get("comment_count", 0) or 0)
+    reactions = int(entity.metadata.get("reaction_total", 0) or 0)
+    approvals = int(entity.approvals or 0)
+    review_comments = int(entity.review_comments or 0)
+
+    age_days = max(0.0, (datetime.now(UTC) - entity.updated_at).total_seconds() / 86400.0)
+    recency = 1.0 / (1.0 + (age_days / 10.0))
+    churn_bonus = min(2.0, math.log1p(max(0, entity.churn)))
+
+    score = 1.0 + (comments * 0.35) + (reactions * 0.20) + (approvals * 0.80) + (review_comments * 0.12) + (cluster_size * 0.42) + recency + churn_bonus
+    if canonical:
+        score *= 1.35
+    return float(score)
+
+
+def _project_vectors_to_plane(vectors: dict[str, list[float]]) -> dict[str, tuple[float, float]]:
+    if not vectors:
+        return {}
+    dims = max(len(vec) for vec in vectors.values() if vec)
+    if dims <= 0:
+        return {entity_id: (0.0, 0.0) for entity_id in vectors}
+
+    def _weight(axis: str, idx: int) -> float:
+        digest = hashlib.blake2b(f"{axis}:{idx}".encode(), digest_size=8).digest()
+        value = int.from_bytes(digest, "big") / ((1 << 64) - 1)
+        return (value * 2.0) - 1.0
+
+    wx = [_weight("x", idx) for idx in range(dims)]
+    wy = [_weight("y", idx) for idx in range(dims)]
+
+    raw_points: dict[str, tuple[float, float]] = {}
+    xs: list[float] = []
+    ys: list[float] = []
+    for entity_id, vec in vectors.items():
+        length = min(len(vec), dims)
+        x = sum(float(vec[idx]) * wx[idx] for idx in range(length))
+        y = sum(float(vec[idx]) * wy[idx] for idx in range(length))
+        raw_points[entity_id] = (x, y)
+        xs.append(x)
+        ys.append(y)
+
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(1e-9, max_x - min_x)
+    span_y = max(1e-9, max_y - min_y)
+
+    projected: dict[str, tuple[float, float]] = {}
+    for entity_id, (x, y) in raw_points.items():
+        nx = ((x - min_x) / span_x) * 2.0 - 1.0
+        ny = ((y - min_y) / span_y) * 2.0 - 1.0
+        projected[entity_id] = (nx, ny)
+    return projected
+
+
+def _build_embedding_neighbor_edges(
+    points: dict[str, tuple[float, float]],
+    *,
+    k: int,
+    max_distance: float,
+) -> list[dict[str, Any]]:
+    if not points or k <= 0 or max_distance <= 0.0:
+        return []
+
+    cell = max_distance
+    grid: dict[tuple[int, int], list[str]] = defaultdict(list)
+    for entity_id, (x, y) in points.items():
+        cell_id = (int(math.floor(x / cell)), int(math.floor(y / cell)))
+        grid[cell_id].append(entity_id)
+
+    edge_set: set[tuple[str, str]] = set()
+    edges: list[dict[str, Any]] = []
+    max_distance_sq = max_distance * max_distance
+
+    for entity_id, (x, y) in points.items():
+        gx, gy = int(math.floor(x / cell)), int(math.floor(y / cell))
+        candidates: list[tuple[float, str]] = []
+        for cx in range(gx - 1, gx + 2):
+            for cy in range(gy - 1, gy + 2):
+                for other_id in grid.get((cx, cy), []):
+                    if other_id == entity_id:
+                        continue
+                    ox, oy = points[other_id]
+                    distance_sq = ((x - ox) ** 2) + ((y - oy) ** 2)
+                    if distance_sq <= max_distance_sq:
+                        candidates.append((distance_sq, other_id))
+        if not candidates:
+            continue
+
+        candidates.sort(key=lambda item: item[0])
+        for distance_sq, other_id in candidates[:k]:
+            left, right = (entity_id, other_id) if entity_id < other_id else (other_id, entity_id)
+            key = (left, right)
+            if key in edge_set:
+                continue
+            edge_set.add(key)
+            distance = math.sqrt(distance_sq)
+            weight = max(0.02, 1.0 - (distance / max_distance))
+            edges.append(
+                {
+                    "data": {
+                        "id": f"atlas-nn:{left}:{right}",
+                        "source": left,
+                        "target": right,
+                        "kind": "embedding_neighbor",
+                        "weight": round(weight, 5),
+                        "distance": round(distance, 5),
+                    }
+                }
+            )
+    return edges
+
+
+def _build_embedding_atlas_payload(
+    *,
+    repo: str,
+    entities: list[SourceEntity],
+    vectors: dict[str, list[float]],
+    cluster_by_entity: dict[str, str],
+    canonical_entities: set[str],
+    cluster_sizes: dict[str, int],
+    include_edges: bool,
+    edge_k: int,
+    edge_max_distance: float,
+    min_signal: float,
+    max_nodes: int,
+) -> dict[str, Any]:
+    points = _project_vectors_to_plane(vectors)
+    nodes_raw: list[tuple[float, dict[str, Any]]] = []
+    for entity in entities:
+        if entity.id not in points:
+            continue
+        cluster_id = cluster_by_entity.get(entity.id)
+        cluster_size = cluster_sizes.get(cluster_id, 1) if cluster_id else 1
+        canonical = entity.id in canonical_entities
+        signal = _entity_signal_score(entity, canonical=canonical, cluster_size=cluster_size)
+        if signal < min_signal:
+            continue
+        x, y = points[entity.id]
+        size = 2.8 + min(12.0, math.log1p(signal) * (2.4 if canonical else 2.0))
+        nodes_raw.append(
+            (
+                signal,
+                {
+                    "data": {
+                        "id": entity.id,
+                        "kind": entity.kind.value,
+                        "label": entity.title,
+                        "short_label": entity.id,
+                        "cluster_id": cluster_id,
+                        "canonical": canonical,
+                        "signal": round(signal, 4),
+                        "x": round(x, 6),
+                        "y": round(y, 6),
+                        "size": round(size, 4),
+                        "author": entity.author,
+                        "state": entity.state,
+                    }
+                },
+            )
+        )
+
+    if max_nodes > 0 and len(nodes_raw) > max_nodes:
+        canonical_nodes = [item for item in nodes_raw if bool(item[1]["data"]["canonical"])]
+        noncanonical = [item for item in nodes_raw if not bool(item[1]["data"]["canonical"])]
+        canonical_nodes.sort(key=lambda item: item[0], reverse=True)
+        noncanonical.sort(key=lambda item: item[0], reverse=True)
+        keep = canonical_nodes[:max_nodes]
+        remaining = max(0, max_nodes - len(keep))
+        keep.extend(noncanonical[:remaining])
+        nodes_raw = keep
+
+    nodes = [item[1] for item in sorted(nodes_raw, key=lambda row: row[0], reverse=True)]
+    node_ids = {node["data"]["id"] for node in nodes}
+    points_selected = {entity_id: point for entity_id, point in points.items() if entity_id in node_ids}
+    edges = _build_embedding_neighbor_edges(points_selected, k=edge_k, max_distance=edge_max_distance) if include_edges else []
+
+    return {
+        "repo": repo,
+        "mode": "embedding_atlas",
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "elements": {"nodes": nodes, "edges": edges},
+    }
+
+
 def _build_graph_payload(
     *,
     repo: str,
@@ -995,6 +1190,10 @@ def _build_ingest_fallback_graph_payload(
 def create_app(config: CarapaceConfig) -> FastAPI:
     app = FastAPI(title="Carapace UI")
     storage = SQLiteStorage(config.storage.sqlite_path)
+    fallback_embedder = LocalHashEmbeddingProvider(
+        dims=max(128, int(config.embedding.dimensions)),
+        model=f"atlas-{config.embedding.model}",
+    )
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     def _repo_or_default(repo: str | None) -> str:
@@ -1032,6 +1231,18 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         authors = sorted({entity.author for entity in ingest_entities})
         author_cache = storage.get_author_metrics_cache(repo, authors)
         return entities, summaries, author_cache
+
+    def _cluster_maps_from_summaries(summaries: list[ClusterSummary]) -> tuple[dict[str, str], set[str], dict[str, int]]:
+        cluster_by_entity: dict[str, str] = {}
+        canonical_entities: set[str] = set()
+        cluster_sizes: dict[str, int] = {}
+        for summary in summaries:
+            cluster_sizes[summary.cluster_id] = len(summary.members)
+            if summary.canonical:
+                canonical_entities.add(summary.canonical)
+            for entity_id in summary.members:
+                cluster_by_entity[entity_id] = summary.cluster_id
+        return cluster_by_entity, canonical_entities, cluster_sizes
 
     @app.get("/", response_class=HTMLResponse)
     def ui_index(request: Request, repo: str | None = None) -> HTMLResponse:
@@ -1199,6 +1410,79 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 max_bridges=max_bridges,
                 mode="cluster_map_ingest",
             )
+        return JSONResponse(payload)
+
+    @app.get("/api/repos/{repo:path}/graph/atlas", response_class=JSONResponse)
+    def api_embedding_atlas(
+        repo: str,
+        kind: str = Query(default="all"),
+        include_edges: bool = Query(default=True),
+        edge_k: int = Query(default=6, ge=0, le=24),
+        edge_max_distance: float = Query(default=0.16, ge=0.01, le=2.0),
+        min_signal: float = Query(default=0.0, ge=0.0, le=10_000.0),
+        max_nodes: int = Query(default=8000, ge=100, le=50_000),
+    ) -> JSONResponse:
+        selected_kind = None if kind == "all" else kind
+        entities = storage.load_ingested_entities(
+            repo,
+            include_closed=False,
+            include_drafts=False,
+            kind=selected_kind,
+        )
+        if not entities:
+            return JSONResponse(
+                {
+                    "repo": repo,
+                    "mode": "embedding_atlas",
+                    "node_count": 0,
+                    "edge_count": 0,
+                    "elements": {"nodes": [], "edges": []},
+                }
+            )
+
+        try:
+            _report, _run_entities, summaries, _ = _load_context(repo)
+        except HTTPException:
+            _ingest_entities, summaries, _ = _load_ingest_context(repo)
+
+        cluster_by_entity, canonical_entities, cluster_sizes = _cluster_maps_from_summaries(summaries)
+
+        entity_ids = [entity.id for entity in entities]
+        run_id, vectors = storage.load_latest_run_embeddings(repo, entity_ids=entity_ids)
+
+        missing_entities = [entity for entity in entities if entity.id not in vectors or not vectors.get(entity.id)]
+        if missing_entities:
+            fallback_inputs = [f"{entity.title}\n{entity.body}" for entity in missing_entities]
+            fallback_vectors = fallback_embedder.embed_texts(fallback_inputs)
+            for entity, vec in zip(missing_entities, fallback_vectors):
+                vectors[entity.id] = vec
+
+        max_updated_at = max(entity.updated_at.isoformat() for entity in entities)
+        signature = f"run:{run_id or 0}|count:{len(entities)}|updated:{max_updated_at}|kind:{kind}|edges:{1 if include_edges else 0}|k:{edge_k}|dist:{edge_max_distance:.4f}|min_signal:{min_signal:.4f}|max_nodes:{max_nodes}"
+        cache_key = "graph_atlas_v1"
+        cached = storage.load_json_cache(repo, cache_key, source_signature=signature)
+        if cached is not None:
+            return JSONResponse(cached)
+
+        payload = _build_embedding_atlas_payload(
+            repo=repo,
+            entities=entities,
+            vectors=vectors,
+            cluster_by_entity=cluster_by_entity,
+            canonical_entities=canonical_entities,
+            cluster_sizes=cluster_sizes,
+            include_edges=include_edges,
+            edge_k=edge_k,
+            edge_max_distance=edge_max_distance,
+            min_signal=min_signal,
+            max_nodes=max_nodes,
+        )
+        storage.upsert_json_cache(
+            repo,
+            cache_key,
+            source_signature=signature,
+            payload=payload,
+        )
         return JSONResponse(payload)
 
     @app.get("/api/repos/{repo:path}/clusters", response_class=JSONResponse)

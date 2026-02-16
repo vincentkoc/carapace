@@ -73,3 +73,26 @@ class StorageBackend(Protocol):
         *,
         model_id: str,
     ) -> int: ...
+
+    def load_latest_run_embeddings(
+        self,
+        repo: str,
+        entity_ids: list[str] | None = None,
+    ) -> tuple[int | None, dict[str, list[float]]]: ...
+
+    def load_json_cache(
+        self,
+        repo: str,
+        cache_key: str,
+        *,
+        source_signature: str,
+    ) -> dict | None: ...
+
+    def upsert_json_cache(
+        self,
+        repo: str,
+        cache_key: str,
+        *,
+        source_signature: str,
+        payload: dict,
+    ) -> None: ...

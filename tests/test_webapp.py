@@ -59,6 +59,12 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
     graph = client.get(f"/api/repos/{repo}/graph")
     assert graph.status_code == 200
 
+    atlas = client.get(f"/api/repos/{repo}/graph/atlas")
+    assert atlas.status_code == 200
+    atlas_payload = atlas.json()
+    assert atlas_payload["mode"] == "embedding_atlas"
+    assert atlas_payload["node_count"] >= 1
+
     cluster_map = client.get(f"/api/repos/{repo}/graph/cluster-map")
     assert cluster_map.status_code == 200
 
@@ -115,6 +121,12 @@ def test_webapp_graph_falls_back_to_ingest_when_run_has_no_multi_clusters(tmp_pa
     assert graph_with_authors.status_code == 200
     payload_with_authors = graph_with_authors.json()
     assert payload_with_authors["node_count"] >= 2  # issue + author node
+
+    atlas = client.get(f"/api/repos/{repo}/graph/atlas")
+    assert atlas.status_code == 200
+    atlas_payload = atlas.json()
+    assert atlas_payload["mode"] == "embedding_atlas"
+    assert atlas_payload["node_count"] == 1
 
     cluster_map = client.get(f"/api/repos/{repo}/graph/cluster-map")
     assert cluster_map.status_code == 200
