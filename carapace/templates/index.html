@@ -6,7 +6,9 @@
     <title>Carapace Graph</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
-    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-force@3"></script>
+    <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
     <style>
       :root {
         --bg: #f6f6ef;
@@ -96,7 +98,8 @@
           includeAuthors: false,
           layoutMode: "auto",
           selectedCluster: null,
-          cy: null,
+          sigma: null,
+          graph: null,
           graphStats: "",
 
           init() {
@@ -133,59 +136,130 @@
             if (this.selectedCluster) params.set("cluster_id", this.selectedCluster);
             const res = await fetch(`/api/repos/${encodeURIComponent(this.repo)}/graph?${params.toString()}`);
             const payload = await res.json();
-            this.graphStats = `${payload.node_count} nodes / ${payload.edge_count} edges`;
+            this.graphStats = `${payload.node_count} nodes / ${payload.edge_count} edges [${payload.mode}]`;
             this.renderGraph(payload.elements);
           },
 
+          colorForKind(kind) {
+            if (kind === "cluster") return "#0f766e";
+            if (kind === "pr") return "#2563eb";
+            if (kind === "issue") return "#dc2626";
+            if (kind === "author") return "#7c3aed";
+            return "#94a3b8";
+          },
+
+          applyForceLayout(graph, useElasticLayout) {
+            const nodeIds = graph.nodes();
+            if (!nodeIds.length) return;
+            const nodes = nodeIds.map((id) => ({
+              id,
+              x: graph.getNodeAttribute(id, "x"),
+              y: graph.getNodeAttribute(id, "y"),
+            }));
+            const links = graph.edges().map((eid) => ({
+              source: graph.source(eid),
+              target: graph.target(eid),
+            }));
+
+            const sim = d3.forceSimulation(nodes)
+              .force("charge", d3.forceManyBody().strength(useElasticLayout ? -55 : -30))
+              .force("link", d3.forceLink(links).id((d) => d.id).distance(useElasticLayout ? 60 : 36).strength(0.22))
+              .force("center", d3.forceCenter(0, 0))
+              .force("collision", d3.forceCollide().radius((d) => Math.max(2.5, graph.getNodeAttribute(d.id, "size"))));
+
+            sim.stop();
+            const ticks = useElasticLayout ? 260 : 120;
+            for (let i = 0; i < ticks; i += 1) sim.tick();
+            sim.stop();
+
+            for (const n of nodes) {
+              graph.mergeNodeAttributes(n.id, { x: n.x, y: n.y });
+            }
+          },
+
           renderGraph(elements) {
-            if (this.cy) this.cy.destroy();
+            if (this.sigma) this.sigma.kill();
+            this.sigma = null;
+            this.graph = null;
             const nodeCount = (elements?.nodes || []).length;
             const showLabels = nodeCount <= 280;
             const useFastLayout = this.layoutMode === "fast" || (this.layoutMode === "auto" && nodeCount > 320);
             const useElasticLayout = this.layoutMode === "elastic" || (this.layoutMode === "auto" && nodeCount <= 320);
-            this.cy = cytoscape({
-              container: document.getElementById("graph"),
-              elements,
-              style: [
-                { selector: "node", style: { "label": showLabels ? "data(label)" : "", "font-size": 10, "text-wrap": "wrap", "text-max-width": 120, "background-color": "#94a3b8", width: "data(size)", height: "data(size)" } },
-                { selector: 'node[kind = "cluster"]', style: { "background-color": "#0f766e", color: "#fff" } },
-                { selector: 'node[kind = "pr"]', style: { "background-color": "#2563eb" } },
-                { selector: 'node[kind = "issue"]', style: { "background-color": "#dc2626" } },
-                { selector: 'node[kind = "author"]', style: { "background-color": "#7c3aed" } },
-                { selector: 'edge[kind = "similarity"]', style: { "line-color": "#475569", width: "mapData(weight, 0, 1, 1, 6)", "curve-style": "unbundled-bezier", opacity: 0.65 } },
-                { selector: 'edge[kind = "in_cluster"]', style: { "line-color": "#0f766e", width: 1.2, opacity: 0.4 } },
-                { selector: 'edge[kind = "authored_by"]', style: { "line-color": "#7c3aed", width: 1, opacity: 0.45 } },
-                { selector: 'edge[kind = "references"]', style: { "line-color": "#b45309", width: 2.2, "line-style": "dashed", opacity: 0.85 } },
-                { selector: 'edge[kind = "cluster_bridge"]', style: { "line-color": "#0f766e", width: "mapData(weight, 0, 5, 1, 4)", "line-style": "dotted", opacity: 0.55 } },
-              ],
-              layout: useFastLayout
-                ? { name: "grid", avoidOverlap: true, avoidOverlapPadding: 6, padding: 16 }
-                : {
-                    name: "cose",
-                    animate: useElasticLayout,
-                    animationDuration: 900,
-                    animationEasing: "ease-out-cubic",
-                    randomize: true,
-                    fit: true,
-                    padding: 24,
-                    nodeRepulsion: 12000,
-                    idealEdgeLength: 100,
-                    edgeElasticity: 160,
-                    gravity: 0.2,
-                    numIter: 800,
-                  },
+
+            const Graph = graphology.Graph;
+            const graph = new Graph({ multi: true, allowSelfLoops: false });
+            const nodeList = elements?.nodes || [];
+            const edgeList = elements?.edges || [];
+
+            nodeList.forEach((node, idx) => {
+              const d = node.data || {};
+              if (!d.id) return;
+              const x = useFastLayout ? ((idx % 24) * 10) : ((Math.random() - 0.5) * 100);
+              const y = useFastLayout ? (Math.floor(idx / 24) * 10) : ((Math.random() - 0.5) * 100);
+              graph.addNode(String(d.id), {
+                label: showLabels ? String(d.label || d.id) : "",
+                size: Math.max(2.2, Number(d.size || 12) / 7),
+                color: this.colorForKind(String(d.kind || "")),
+                kind: String(d.kind || ""),
+                x,
+                y,
+              });
             });
 
-            this.cy.on("tap", "node", (evt) => {
-              const focus = evt.target;
-              const neighborhood = focus.closedNeighborhood();
-              const others = this.cy.elements().difference(neighborhood);
-              others.animate({ style: { opacity: 0.12 } }, { duration: 180 });
-              neighborhood.animate({ style: { opacity: 1.0 } }, { duration: 180 });
-              setTimeout(() => {
-                this.cy.elements().animate({ style: { opacity: 1.0 } }, { duration: 220 });
-              }, 1200);
+            edgeList.forEach((edge, idx) => {
+              const d = edge.data || {};
+              if (!d.source || !d.target) return;
+              const source = String(d.source);
+              const target = String(d.target);
+              if (!graph.hasNode(source) || !graph.hasNode(target) || source === target) return;
+              const kind = String(d.kind || "");
+              const color = kind === "references" ? "#b45309"
+                : kind === "authored_by" ? "#7c3aed"
+                : kind === "cluster_bridge" ? "#0f766e"
+                : kind === "in_cluster" ? "#0f766e"
+                : "#475569";
+              const size = kind === "similarity" ? Math.max(0.7, Number(d.weight || 0.3) * 2.4) : 1.0;
+              graph.addEdgeWithKey(String(d.id || `e-${idx}`), source, target, { color, size, kind, weight: Number(d.weight || 0) });
             });
+
+            if (!useFastLayout) this.applyForceLayout(graph, useElasticLayout);
+
+            const renderer = new Sigma(graph, document.getElementById("graph"), {
+              renderEdgeLabels: false,
+              labelDensity: showLabels ? 0.08 : 0.0,
+              labelGridCellSize: 120,
+              minCameraRatio: 0.05,
+              maxCameraRatio: 12,
+              zIndex: true,
+            });
+            this.graph = graph;
+            this.sigma = renderer;
+
+            let focusedNode = null;
+            const resetFocus = () => {
+              focusedNode = null;
+              renderer.setSetting("nodeReducer", null);
+              renderer.setSetting("edgeReducer", null);
+              renderer.refresh();
+            };
+
+            renderer.on("clickNode", ({ node }) => {
+              focusedNode = node;
+              const neighborhood = new Set(graph.neighbors(node));
+              neighborhood.add(node);
+              renderer.setSetting("nodeReducer", (n, data) => {
+                if (neighborhood.has(n)) return data;
+                return { ...data, color: "#d8dde5", label: "" };
+              });
+              renderer.setSetting("edgeReducer", (e, data) => {
+                const ext = graph.extremities(e);
+                if (ext.includes(node)) return data;
+                return { ...data, color: "#e5e7eb", hidden: false };
+              });
+              renderer.refresh();
+            });
+
+            renderer.on("clickStage", () => resetFocus());
           },
         };
       }
