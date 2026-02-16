@@ -453,6 +453,7 @@ def _build_cluster_detail_payload(
                 "data": {
                     "id": entity.id,
                     "kind": entity.kind.value,
+                    "number": entity.number,
                     "label": entity.title,
                     "canonical": entity.id == canonical_id,
                     "author": entity.author,
@@ -491,8 +492,7 @@ def _build_cluster_detail_payload(
                 }
             )
 
-        refs = set(entity.linked_issues) | set(entity.soft_linked_issues)
-        for ref in refs:
+        for ref in set(entity.linked_issues):
             if not ref.isdigit():
                 continue
             issue_id = issue_index.get(int(ref))
@@ -500,11 +500,27 @@ def _build_cluster_detail_payload(
                 edges.append(
                     {
                         "data": {
-                            "id": f"detail-ref:{entity.id}:{issue_id}:{ref}",
+                            "id": f"detail-ref-hard:{entity.id}:{issue_id}:{ref}",
                             "source": entity.id,
                             "target": issue_id,
-                            "kind": "references",
-                            "weight": 1.0,
+                            "kind": "references_hard",
+                            "weight": 1.2,
+                        }
+                    }
+                )
+        for ref in set(entity.soft_linked_issues):
+            if not ref.isdigit():
+                continue
+            issue_id = issue_index.get(int(ref))
+            if issue_id and issue_id in include_ids and issue_id != entity.id:
+                edges.append(
+                    {
+                        "data": {
+                            "id": f"detail-ref-soft:{entity.id}:{issue_id}:{ref}",
+                            "source": entity.id,
+                            "target": issue_id,
+                            "kind": "references_soft",
+                            "weight": 0.75,
                         }
                     }
                 )
@@ -573,6 +589,7 @@ def _build_ingest_cluster_detail_payload(
                 "data": {
                     "id": entity.id,
                     "kind": entity.kind.value,
+                    "number": entity.number,
                     "label": entity.title,
                     "canonical": entity.id == summary.canonical,
                     "author": entity.author,
@@ -611,8 +628,7 @@ def _build_ingest_cluster_detail_payload(
                 }
             )
 
-        refs = set(entity.linked_issues) | set(entity.soft_linked_issues)
-        for ref in refs:
+        for ref in set(entity.linked_issues):
             if not ref.isdigit():
                 continue
             issue_id = issue_index.get(int(ref))
@@ -620,11 +636,27 @@ def _build_ingest_cluster_detail_payload(
                 edges.append(
                     {
                         "data": {
-                            "id": f"ingest-detail-ref:{entity.id}:{issue_id}:{ref}",
+                            "id": f"ingest-detail-ref-hard:{entity.id}:{issue_id}:{ref}",
                             "source": entity.id,
                             "target": issue_id,
-                            "kind": "references",
-                            "weight": 1.0,
+                            "kind": "references_hard",
+                            "weight": 1.2,
+                        }
+                    }
+                )
+        for ref in set(entity.soft_linked_issues):
+            if not ref.isdigit():
+                continue
+            issue_id = issue_index.get(int(ref))
+            if issue_id and issue_id in entity_set and issue_id != entity.id:
+                edges.append(
+                    {
+                        "data": {
+                            "id": f"ingest-detail-ref-soft:{entity.id}:{issue_id}:{ref}",
+                            "source": entity.id,
+                            "target": issue_id,
+                            "kind": "references_soft",
+                            "weight": 0.75,
                         }
                     }
                 )
@@ -823,6 +855,7 @@ def _build_embedding_atlas_payload(
                     "data": {
                         "id": entity.id,
                         "kind": entity.kind.value,
+                        "number": entity.number,
                         "label": entity.title,
                         "short_label": entity.id,
                         "cluster_id": cluster_id,
