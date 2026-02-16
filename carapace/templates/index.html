@@ -224,7 +224,13 @@
 
             if (!useFastLayout) this.applyForceLayout(graph, useElasticLayout);
 
-            const renderer = new Sigma(graph, document.getElementById("graph"), {
+            const SigmaCtor = window.Sigma || (window.sigma && window.sigma.Sigma);
+            if (!SigmaCtor) {
+              this.graphStats = "sigma failed to load";
+              return;
+            }
+
+            const renderer = new SigmaCtor(graph, document.getElementById("graph"), {
               renderEdgeLabels: false,
               labelDensity: showLabels ? 0.08 : 0.0,
               labelGridCellSize: 120,
