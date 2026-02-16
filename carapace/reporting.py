@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import json
+from collections import Counter
 from pathlib import Path
 
 from carapace.models import EngineReport, SourceEntity
@@ -84,17 +84,21 @@ def render_markdown_report(
     lines.append(f"- Similarity edges: {len(report.edges)}")
     lines.append(f"- Clusters: {len(report.clusters)}")
     if cluster_type_counts:
-        type_summary = ", ".join(
-            f"{cluster_type}={count}"
-            for cluster_type, count in sorted(cluster_type_counts.items(), key=lambda item: (-item[1], item[0]))
-        )
+        type_summary = ", ".join(f"{cluster_type}={count}" for cluster_type, count in sorted(cluster_type_counts.items(), key=lambda item: (-item[1], item[0])))
         lines.append(f"- Cluster types: {type_summary}")
     lines.append("")
 
     decisions = list(report.canonical_decisions)
+
+    def _cluster_size(cluster_id: str) -> int:
+        cluster = cluster_by_id.get(cluster_id)
+        if cluster is None:
+            return 0
+        return len(cluster.members)
+
     decisions.sort(
         key=lambda decision: (
-            -len(cluster_by_id.get(decision.cluster_id).members if cluster_by_id.get(decision.cluster_id) else []),
+            -_cluster_size(decision.cluster_id),
             decision.cluster_id,
         )
     )
@@ -144,7 +148,5 @@ def write_report_bundle(report: EngineReport, output_dir: str | Path, entities: 
         for entry in report.routing
     }
     (out / "labels_to_apply.json").write_text(json.dumps(labels_payload, indent=2))
-    (out / "triage_report.md").write_text(
-        render_markdown_report(report, entities=entities, include_singleton_orphans=False)
-    )
+    (out / "triage_report.md").write_text(render_markdown_report(report, entities=entities, include_singleton_orphans=False))
     (out / "scan_profile.json").write_text(json.dumps(report.profile, indent=2))

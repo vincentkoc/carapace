@@ -169,12 +169,12 @@ def test_linked_pair_cluster_gets_linked_pair_label() -> None:
             "kind": EntityKind.PR,
             "number": 101,
             "title": "Fix startup crash",
-                "body": "Fixes #101\nThe app crashes on startup after loading configuration.\nThis reproduces when plugin hooks initialize and session state is restored.",
-                "author": "bob",
-                "changed_files": ["src/app.py"],
-                "linked_issues": ["101"],
-            }
-        )
+            "body": "Fixes #101\nThe app crashes on startup after loading configuration.\nThis reproduces when plugin hooks initialize and session state is restored.",
+            "author": "bob",
+            "changed_files": ["src/app.py"],
+            "linked_issues": ["101"],
+        }
+    )
 
     cfg = CarapaceConfig.model_validate(
         {
