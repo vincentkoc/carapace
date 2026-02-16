@@ -59,8 +59,16 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
     graph = client.get(f"/api/repos/{repo}/graph")
     assert graph.status_code == 200
 
-    clusters = client.get(f"/api/repos/{repo}/clusters")
+    cluster_map = client.get(f"/api/repos/{repo}/graph/cluster-map")
+    assert cluster_map.status_code == 200
+
+    clusters = client.get(f"/api/repos/{repo}/clusters?min_members=1")
     assert clusters.status_code == 200
+    cluster_rows = clusters.json().get("clusters", [])
+    assert cluster_rows
+
+    detail = client.get(f"/api/repos/{repo}/clusters/{cluster_rows[0]['cluster_id']}/detail")
+    assert detail.status_code == 200
 
     authors = client.get(f"/api/repos/{repo}/authors")
     assert authors.status_code == 200

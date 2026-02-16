@@ -3,60 +3,73 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Carapace Graph</title>
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <title>Carapace Triage Graph</title>
     <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/graphology@0.25.4/dist/graphology.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
     <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
     <style>
       :root {
-        --bg: #f6f6ef;
-        --panel: #fffdf8;
-        --text: #1f2a37;
-        --muted: #6b7280;
-        --line: #d9d4c7;
+        --bg: #f4f3ed;
+        --panel: #fffdf7;
+        --line: #dad5c8;
+        --text: #15212b;
+        --muted: #607080;
         --accent: #0f766e;
       }
-      body { margin: 0; font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
-      .layout { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
-      .sidebar { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 16px; }
-      .main { display: grid; grid-template-rows: auto 1fr; }
-      .toolbar { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); background: var(--panel); padding: 12px 16px; }
-      .toolbar input, .toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
-      #graph { width: 100%; height: 100%; }
-      .cluster-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; background: #ffffff; }
-      .cluster-card h4 { margin: 0 0 6px; font-size: 14px; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; }
+      .layout { display: grid; grid-template-columns: 420px 1fr; height: 100vh; }
+      .sidebar { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 14px; }
+      .main { display: grid; grid-template-rows: auto 1fr 1fr; min-height: 0; }
+      .toolbar { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 12px; flex-wrap: wrap; }
+      .toolbar input, .toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+      .card { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px; margin-bottom: 8px; }
+      .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
       .muted { color: var(--muted); font-size: 12px; }
-      .pill { display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px; font-size:11px; }
-      button { border:1px solid var(--line); background:white; border-radius:8px; padding:6px 10px; cursor:pointer; }
+      .pill { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+      .graph-wrap { min-height: 0; border-top: 1px solid var(--line); background: #fff; }
+      .graph-title { font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fbfaf6; display: flex; justify-content: space-between; }
+      .graph { width: 100%; height: calc(100% - 37px); }
+      button { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; }
       button:hover { border-color: var(--accent); color: var(--accent); }
     </style>
   </head>
-  <body x-data="graphPage()" x-init="init()">
+  <body x-data="triagePage()" x-init="init()">
     <div class="layout">
       <aside class="sidebar">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h2 style="margin:0;">Clusters</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="margin:0;">Resolve Queue</h2>
           <span class="muted" x-text="repo"></span>
         </div>
-        <div class="muted" style="margin-bottom:12px;">Obsidian-style triage graph</div>
+        <div class="muted" style="margin:6px 0 12px;">Queue-first triage. Graph is drill-down only.</div>
 
         <div style="display:flex; gap:6px; margin-bottom:10px;">
-          <select x-model="kind" @change="reloadClusters()">
+          <select x-model="kind" @change="reloadAll()">
             <option value="all">all</option>
             <option value="duplicate_candidate">duplicate_candidate</option>
             <option value="linked_pair">linked_pair</option>
             <option value="mixed_pair">mixed_pair</option>
           </select>
-          <input type="number" min="1" x-model="minMembers" @change="reloadClusters()" title="min members" />
+          <input type="number" min="1" x-model.number="minMembers" @change="reloadAll()" title="min members" />
+          <input type="number" min="10" max="2000" x-model.number="maxClusters" @change="reloadAll()" title="max clusters" />
         </div>
 
-        <div id="clusters"
-             hx-get="/ui/fragments/clusters"
-             hx-trigger="load"
-             :hx-vals="JSON.stringify({repo: repo, kind: kind, min_members: Number(minMembers)})"
-             hx-swap="innerHTML"></div>
+        <template x-for="cluster in clusters" :key="cluster.cluster_id">
+          <div class="card" :class="{active: selectedClusterId===cluster.cluster_id}" @click="selectCluster(cluster.cluster_id)">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <div style="font-weight:600;" x-text="cluster.cluster_id"></div>
+              <span class="pill" x-text="cluster.cluster_type"></span>
+            </div>
+            <div class="muted" style="margin-top:4px;">
+              members=<span x-text="cluster.member_count"></span>
+              priority=<span x-text="cluster.priority"></span>
+            </div>
+            <div class="muted" style="margin-top:4px;">canonical=<span x-text="cluster.canonical || 'none'"></span></div>
+          </div>
+        </template>
+
+        <div class="muted" x-show="clusters.length===0">No clusters match filters.</div>
       </aside>
 
       <main class="main">
@@ -68,76 +81,52 @@
             {% endfor %}
           </select>
 
-          <label>Min edge</label>
-          <input type="number" step="0.01" min="0" max="1" x-model="minEdge" @change="reloadGraph()" />
-          <label>Clusters</label>
-          <input type="number" min="10" max="2000" x-model="maxClusters" @change="reloadGraph()" />
-          <label><input type="checkbox" x-model="includeAuthors" @change="reloadGraph()" /> authors</label>
-          <label>Layout</label>
-          <select x-model="layoutMode" @change="reloadGraph()">
-            <option value="auto">auto</option>
-            <option value="elastic">elastic</option>
-            <option value="fast">fast</option>
-          </select>
+          <label>Detail edge≥</label>
+          <input type="number" step="0.01" min="0" max="1" x-model.number="minDetailEdge" @change="reloadDetail()" />
 
-          <button @click="focusAll()">all clusters</button>
-          <span class="muted" x-text="graphStats"></span>
+          <label><input type="checkbox" x-model="includeAuthors" @change="reloadDetail()" /> detail authors</label>
+
+          <button @click="reloadAll()">refresh</button>
+          <span class="muted" x-text="statusLine"></span>
         </div>
-        <div id="graph"></div>
+
+        <section class="graph-wrap">
+          <div class="graph-title">
+            <span>Cluster Map</span>
+            <span class="muted" x-text="mapStats"></span>
+          </div>
+          <div id="cluster-map" class="graph"></div>
+        </section>
+
+        <section class="graph-wrap">
+          <div class="graph-title">
+            <span>Cluster Detail</span>
+            <span class="muted" x-text="detailStats"></span>
+          </div>
+          <div id="cluster-detail" class="graph"></div>
+        </section>
       </main>
     </div>
 
     <script>
-      function graphPage() {
+      function triagePage() {
         return {
           repo: {{ repo|tojson }},
           kind: "all",
           minMembers: 2,
-          minEdge: 0.15,
-          maxClusters: 60,
+          maxClusters: 120,
+          minDetailEdge: 0.2,
           includeAuthors: false,
-          layoutMode: "auto",
-          selectedCluster: null,
-          sigma: null,
-          graph: null,
-          graphStats: "",
+          clusters: [],
+          selectedClusterId: null,
+          mapSigma: null,
+          detailSigma: null,
+          statusLine: "",
+          mapStats: "",
+          detailStats: "",
 
           init() {
-            window.carapaceSelectCluster = (clusterId) => {
-              this.selectedCluster = clusterId;
-              this.reloadGraph();
-            };
-            this.reloadGraph();
-          },
-
-          reloadClusters() {
-            const el = document.getElementById("clusters");
-            el.setAttribute("hx-vals", JSON.stringify({ repo: this.repo, kind: this.kind, min_members: Number(this.minMembers) }));
-            htmx.trigger(el, "load");
-          },
-
-          reloadAll() {
-            this.selectedCluster = null;
-            this.reloadClusters();
-            this.reloadGraph();
-          },
-
-          focusAll() {
-            this.selectedCluster = null;
-            this.reloadGraph();
-          },
-
-          async reloadGraph() {
-            const params = new URLSearchParams({
-              min_edge_score: String(this.minEdge),
-              max_clusters: String(this.maxClusters),
-              include_authors: String(this.includeAuthors),
-            });
-            if (this.selectedCluster) params.set("cluster_id", this.selectedCluster);
-            const res = await fetch(`/api/repos/${encodeURIComponent(this.repo)}/graph?${params.toString()}`);
-            const payload = await res.json();
-            this.graphStats = `${payload.node_count} nodes / ${payload.edge_count} edges [${payload.mode}]`;
-            this.renderGraph(payload.elements);
+            this.reloadAll();
           },
 
           colorForKind(kind) {
@@ -148,124 +137,157 @@
             return "#94a3b8";
           },
 
-          applyForceLayout(graph, useElasticLayout) {
-            const nodeIds = graph.nodes();
-            if (!nodeIds.length) return;
-            const nodes = nodeIds.map((id) => ({
-              id,
-              x: graph.getNodeAttribute(id, "x"),
-              y: graph.getNodeAttribute(id, "y"),
-            }));
-            const links = graph.edges().map((eid) => ({
-              source: graph.source(eid),
-              target: graph.target(eid),
-            }));
-
+          applyForce(graph, strength = -44, distance = 52, ticks = 180) {
+            const nodes = graph.nodes().map((id) => ({ id, x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") }));
+            const links = graph.edges().map((eid) => ({ source: graph.source(eid), target: graph.target(eid) }));
             const sim = d3.forceSimulation(nodes)
-              .force("charge", d3.forceManyBody().strength(useElasticLayout ? -55 : -30))
-              .force("link", d3.forceLink(links).id((d) => d.id).distance(useElasticLayout ? 60 : 36).strength(0.22))
-              .force("center", d3.forceCenter(0, 0))
-              .force("collision", d3.forceCollide().radius((d) => Math.max(2.5, graph.getNodeAttribute(d.id, "size"))));
-
+              .force("charge", d3.forceManyBody().strength(strength))
+              .force("link", d3.forceLink(links).id((d) => d.id).distance(distance).strength(0.22))
+              .force("center", d3.forceCenter(0, 0));
             sim.stop();
-            const ticks = useElasticLayout ? 260 : 120;
             for (let i = 0; i < ticks; i += 1) sim.tick();
-            sim.stop();
-
-            for (const n of nodes) {
-              graph.mergeNodeAttributes(n.id, { x: n.x, y: n.y });
-            }
+            for (const n of nodes) graph.mergeNodeAttributes(n.id, { x: n.x, y: n.y });
           },
 
-          renderGraph(elements) {
-            if (this.sigma) this.sigma.kill();
-            this.sigma = null;
-            this.graph = null;
-            const nodeCount = (elements?.nodes || []).length;
-            const showLabels = nodeCount <= 280;
-            const useFastLayout = this.layoutMode === "fast" || (this.layoutMode === "auto" && nodeCount > 320);
-            const useElasticLayout = this.layoutMode === "elastic" || (this.layoutMode === "auto" && nodeCount <= 320);
-
+          makeGraph(elements, { mode }) {
             const Graph = graphology.Graph;
-            const graph = new Graph({ multi: true, allowSelfLoops: false });
-            const nodeList = elements?.nodes || [];
-            const edgeList = elements?.edges || [];
+            const g = new Graph({ multi: true, allowSelfLoops: false });
+            const nodes = elements?.nodes || [];
+            const edges = elements?.edges || [];
 
-            nodeList.forEach((node, idx) => {
+            nodes.forEach((node, idx) => {
               const d = node.data || {};
-              if (!d.id) return;
-              const x = useFastLayout ? ((idx % 24) * 10) : ((Math.random() - 0.5) * 100);
-              const y = useFastLayout ? (Math.floor(idx / 24) * 10) : ((Math.random() - 0.5) * 100);
-              graph.addNode(String(d.id), {
-                label: showLabels ? String(d.label || d.id) : "",
-                size: Math.max(2.2, Number(d.size || 12) / 7),
-                color: this.colorForKind(String(d.kind || "")),
+              const id = String(d.id || `n-${idx}`);
+              g.addNode(id, {
+                label: String(d.label || id),
                 kind: String(d.kind || ""),
-                x,
-                y,
+                size: Math.max(2.0, Number(d.size || 10) / 7),
+                color: this.colorForKind(String(d.kind || "")),
+                x: (Math.random() - 0.5) * 60,
+                y: (Math.random() - 0.5) * 60,
               });
             });
 
-            edgeList.forEach((edge, idx) => {
+            edges.forEach((edge, idx) => {
               const d = edge.data || {};
-              if (!d.source || !d.target) return;
-              const source = String(d.source);
-              const target = String(d.target);
-              if (!graph.hasNode(source) || !graph.hasNode(target) || source === target) return;
+              const source = String(d.source || "");
+              const target = String(d.target || "");
+              if (!g.hasNode(source) || !g.hasNode(target) || source === target) return;
               const kind = String(d.kind || "");
               const color = kind === "references" ? "#b45309"
                 : kind === "authored_by" ? "#7c3aed"
                 : kind === "cluster_bridge" ? "#0f766e"
-                : kind === "in_cluster" ? "#0f766e"
                 : "#475569";
-              const size = kind === "similarity" ? Math.max(0.7, Number(d.weight || 0.3) * 2.4) : 1.0;
-              graph.addEdgeWithKey(String(d.id || `e-${idx}`), source, target, { color, size, kind, weight: Number(d.weight || 0) });
+              g.addEdgeWithKey(String(d.id || `e-${idx}`), source, target, {
+                kind,
+                weight: Number(d.weight || 0),
+                size: kind === "similarity" ? Math.max(0.8, Number(d.weight || 0.2) * 2.3) : 1.0,
+                color,
+              });
             });
 
-            if (!useFastLayout) this.applyForceLayout(graph, useElasticLayout);
+            if (mode === "cluster-map") {
+              this.applyForce(g, -34, 42, 140);
+            } else {
+              this.applyForce(g, -48, 54, 200);
+            }
+            return g;
+          },
+
+          renderSigma(containerId, graph, target) {
+            if (target === "map" && this.mapSigma) this.mapSigma.kill();
+            if (target === "detail" && this.detailSigma) this.detailSigma.kill();
 
             const SigmaCtor = window.Sigma || (window.sigma && window.sigma.Sigma);
             if (!SigmaCtor) {
-              this.graphStats = "sigma failed to load";
-              return;
+              this.statusLine = "sigma failed to load";
+              return null;
             }
 
-            const renderer = new SigmaCtor(graph, document.getElementById("graph"), {
+            const renderer = new SigmaCtor(graph, document.getElementById(containerId), {
               renderEdgeLabels: false,
-              labelDensity: showLabels ? 0.08 : 0.0,
+              labelDensity: 0.1,
               labelGridCellSize: 120,
               minCameraRatio: 0.05,
               maxCameraRatio: 12,
               zIndex: true,
             });
-            this.graph = graph;
-            this.sigma = renderer;
 
-            let focusedNode = null;
-            const resetFocus = () => {
-              focusedNode = null;
-              renderer.setSetting("nodeReducer", null);
-              renderer.setSetting("edgeReducer", null);
-              renderer.refresh();
-            };
+            if (target === "map") {
+              this.mapSigma = renderer;
+              renderer.on("clickNode", ({ node }) => {
+                if (String(node).startsWith("cluster-")) this.selectCluster(String(node));
+              });
+            } else {
+              this.detailSigma = renderer;
+            }
+            return renderer;
+          },
 
-            renderer.on("clickNode", ({ node }) => {
-              focusedNode = node;
-              const neighborhood = new Set(graph.neighbors(node));
-              neighborhood.add(node);
-              renderer.setSetting("nodeReducer", (n, data) => {
-                if (neighborhood.has(n)) return data;
-                return { ...data, color: "#d8dde5", label: "" };
-              });
-              renderer.setSetting("edgeReducer", (e, data) => {
-                const ext = graph.extremities(e);
-                if (ext.includes(node)) return data;
-                return { ...data, color: "#e5e7eb", hidden: false };
-              });
-              renderer.refresh();
+          async fetchJSON(path) {
+            const res = await fetch(path);
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+            return await res.json();
+          },
+
+          async reloadAll() {
+            this.statusLine = "loading...";
+            try {
+              await this.reloadQueue();
+              await this.reloadMap();
+              if (this.selectedClusterId) await this.reloadDetail();
+              this.statusLine = "ready";
+            } catch (err) {
+              this.statusLine = String(err);
+            }
+          },
+
+          async reloadQueue() {
+            const params = new URLSearchParams({
+              kind: this.kind,
+              min_members: String(this.minMembers),
+              limit: String(this.maxClusters),
             });
+            const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters?${params.toString()}`);
+            this.clusters = payload.clusters || [];
+            if (!this.selectedClusterId || !this.clusters.find((row) => row.cluster_id === this.selectedClusterId)) {
+              this.selectedClusterId = this.clusters.length ? this.clusters[0].cluster_id : null;
+            }
+          },
 
-            renderer.on("clickStage", () => resetFocus());
+          async reloadMap() {
+            const params = new URLSearchParams({
+              kind: this.kind,
+              min_members: String(this.minMembers),
+              max_clusters: String(this.maxClusters),
+              max_bridges: "900",
+            });
+            const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/graph/cluster-map?${params.toString()}`);
+            this.mapStats = `${payload.node_count} clusters / ${payload.edge_count} bridges`;
+            const graph = this.makeGraph(payload.elements, { mode: "cluster-map" });
+            this.renderSigma("cluster-map", graph, "map");
+          },
+
+          async reloadDetail() {
+            if (!this.selectedClusterId) {
+              this.detailStats = "no cluster selected";
+              return;
+            }
+            const params = new URLSearchParams({
+              min_edge_score: String(this.minDetailEdge),
+              include_authors: String(this.includeAuthors),
+            });
+            const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters/${encodeURIComponent(this.selectedClusterId)}/detail?${params.toString()}`);
+            const c = payload.cluster || {};
+            this.detailStats = `${payload.node_count} nodes / ${payload.edge_count} edges — ${c.cluster_type || ""}`;
+            const graph = this.makeGraph(payload.elements, { mode: "cluster-detail" });
+            this.renderSigma("cluster-detail", graph, "detail");
+          },
+
+          async selectCluster(clusterId) {
+            if (!clusterId) return;
+            this.selectedClusterId = clusterId;
+            await this.reloadDetail();
           },
         };
       }
