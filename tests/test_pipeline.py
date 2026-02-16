@@ -148,3 +148,46 @@ def test_close_candidate_sets_close_when_safe_mode_off() -> None:
     )
     report = CarapaceEngine(config=cfg).scan_entities([issue])
     assert report.routing[0].close is True
+
+
+def test_linked_pair_cluster_gets_linked_pair_label() -> None:
+    issue = SourceEntity.model_validate(
+        {
+            "id": "issue:101",
+            "repo": "acme/repo",
+            "kind": EntityKind.ISSUE,
+            "number": 101,
+            "title": "Fix startup crash",
+            "body": "The app crashes on startup after loading configuration.\nThis reproduces when plugin hooks initialize and session state is restored.",
+            "author": "alice",
+        }
+    )
+    pr = SourceEntity.model_validate(
+        {
+            "id": "pr:101",
+            "repo": "acme/repo",
+            "kind": EntityKind.PR,
+            "number": 101,
+            "title": "Fix startup crash",
+                "body": "Fixes #101\nThe app crashes on startup after loading configuration.\nThis reproduces when plugin hooks initialize and session state is restored.",
+                "author": "bob",
+                "changed_files": ["src/app.py"],
+                "linked_issues": ["101"],
+            }
+        )
+
+    cfg = CarapaceConfig.model_validate(
+        {
+            "similarity": {
+                "hard_link_issue_pr_strong_semantic_min": 0.0,
+                "hard_link_weak_semantic_min": 0.0,
+                "weak_semantic_min": 0.0,
+            }
+        }
+    )
+    report = CarapaceEngine(config=cfg).scan_entities([issue, pr])
+    routing = {entry.entity_id: entry.labels for entry in report.routing}
+    assert "triage/linked-pair" in routing["issue:101"]
+    assert "triage/linked-pair" in routing["pr:101"]
+    assert "triage/canonical" not in routing["issue:101"]
+    assert "triage/canonical" not in routing["pr:101"]

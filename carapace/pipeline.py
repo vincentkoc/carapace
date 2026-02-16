@@ -270,7 +270,8 @@ class CarapaceEngine:
 
         routing_start = time.perf_counter()
         self.hooks.emit(HookName.BEFORE_ACTION, context, {})
-        routing = self._build_routing(entities, low_pass, canonical)
+        cluster_type_by_id = {cluster.id: cluster.cluster_type for cluster in clusters}
+        routing = self._build_routing(entities, low_pass, canonical, cluster_type_by_id)
         self.hooks.emit(HookName.AFTER_ACTION, context, {"routing": len(routing)})
         logger.debug("Routing decisions generated: %s", len(routing))
         logger.info("Routing decisions generated: %s", len(routing))
@@ -343,14 +344,16 @@ class CarapaceEngine:
         entities: list[SourceEntity],
         low_pass: dict[str, LowPassDecision],
         canonical: list,
+        cluster_type_by_id: dict[str, str],
     ) -> list[RoutingDecision]:
         labels_cfg = self.config.labels
-        decision_map: dict[str, tuple[DecisionState, str | None, int]] = {}
+        decision_map: dict[str, tuple[DecisionState, str | None, int, str]] = {}
 
         for cluster_decision in canonical:
             cluster_size = len(cluster_decision.member_decisions)
+            cluster_type = cluster_type_by_id.get(cluster_decision.cluster_id, "generic")
             for member in cluster_decision.member_decisions:
-                decision_map[member.entity_id] = (member.state, member.duplicate_of, cluster_size)
+                decision_map[member.entity_id] = (member.state, member.duplicate_of, cluster_size, cluster_type)
 
         routing: list[RoutingDecision] = []
         for entity in entities:
@@ -372,8 +375,12 @@ class CarapaceEngine:
                         comment = self.config.action.close_comment
             else:
                 labels.append(labels_cfg.ready_human)
-                state, duplicate_of, cluster_size = decision_map.get(entity.id, (DecisionState.RELATED, None, 1))
-                if state == DecisionState.CANONICAL:
+                state, duplicate_of, cluster_size, cluster_type = decision_map.get(entity.id, (DecisionState.RELATED, None, 1, "generic"))
+                if cluster_size > 1 and cluster_type == "linked_pair":
+                    labels.append(labels_cfg.linked_pair)
+                    if self.config.action.add_comments and state == DecisionState.CANONICAL and entity.kind.value == "pr":
+                        comment = "Linked PR/issue pair for the same work item."
+                elif state == DecisionState.CANONICAL:
                     if cluster_size > 1:
                         labels.append(labels_cfg.canonical)
                     if self.config.action.add_comments and cluster_size > 1:

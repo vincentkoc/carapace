@@ -128,6 +128,7 @@ class LabelsConfig(BaseModel):
     canonical: str = "triage/canonical"
     duplicate: str = "triage/duplicate"
     related: str = "triage/related"
+    linked_pair: str = "triage/linked-pair"
     quarantine: str = "triage/quarantine"
     noise_suppressed: str = "triage/noise-suppressed"
     close_candidate: str = "triage/close-candidate"
