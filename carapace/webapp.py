@@ -500,8 +500,8 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         repo: str,
         cluster_id: str | None = None,
         min_edge_score: float = Query(default=0.15, ge=0.0, le=1.0),
-        fallback_max_entities: int = Query(default=600, ge=50, le=5000),
-        max_clusters: int = Query(default=80, ge=10, le=2000),
+        fallback_max_entities: int = Query(default=300, ge=50, le=5000),
+        max_clusters: int = Query(default=60, ge=10, le=2000),
         include_authors: bool = Query(default=False),
     ) -> JSONResponse:
         payload: dict[str, Any]

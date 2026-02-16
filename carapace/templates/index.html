@@ -86,7 +86,7 @@
           kind: "all",
           minMembers: 2,
           minEdge: 0.15,
-          maxClusters: 80,
+          maxClusters: 60,
           includeAuthors: false,
           selectedCluster: null,
           cy: null,
@@ -132,11 +132,14 @@
 
           renderGraph(elements) {
             if (this.cy) this.cy.destroy();
+            const nodeCount = (elements?.nodes || []).length;
+            const showLabels = nodeCount <= 280;
+            const fastLayout = nodeCount > 320;
             this.cy = cytoscape({
               container: document.getElementById("graph"),
               elements,
               style: [
-                { selector: "node", style: { "label": "data(label)", "font-size": 10, "text-wrap": "wrap", "text-max-width": 120, "background-color": "#94a3b8", width: "data(size)", height: "data(size)" } },
+                { selector: "node", style: { "label": showLabels ? "data(label)" : "", "font-size": 10, "text-wrap": "wrap", "text-max-width": 120, "background-color": "#94a3b8", width: "data(size)", height: "data(size)" } },
                 { selector: 'node[kind = "cluster"]', style: { "background-color": "#0f766e", color: "#fff" } },
                 { selector: 'node[kind = "pr"]', style: { "background-color": "#2563eb" } },
                 { selector: 'node[kind = "issue"]', style: { "background-color": "#dc2626" } },
@@ -147,7 +150,9 @@
                 { selector: 'edge[kind = "references"]', style: { "line-color": "#b45309", width: 2.2, "line-style": "dashed", opacity: 0.85 } },
                 { selector: 'edge[kind = "cluster_bridge"]', style: { "line-color": "#0f766e", width: "mapData(weight, 0, 5, 1, 4)", "line-style": "dotted", opacity: 0.55 } },
               ],
-              layout: { name: "cose", animate: false, padding: 24, nodeRepulsion: 9000, idealEdgeLength: 90 },
+              layout: fastLayout
+                ? { name: "grid", avoidOverlap: true, avoidOverlapPadding: 6, padding: 16 }
+                : { name: "cose", animate: false, padding: 24, nodeRepulsion: 9000, idealEdgeLength: 90 },
             });
           },
         };
