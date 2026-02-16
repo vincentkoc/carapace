@@ -77,6 +77,8 @@ class FakeGhClient:
                     "created_at": "2026-02-13T10:00:00Z",
                     "updated_at": "2026-02-14T10:00:00Z",
                     "author_association": "NONE",
+                    "comments": 4,
+                    "reactions": {"+1": 2, "eyes": 1, "url": "https://api.github.com/reactions"},
                 },
                 {
                     "id": 2002,
@@ -154,6 +156,8 @@ def test_github_connector_includes_issues_and_skips_issue_pr_mirror() -> None:
     assert "issue:88" not in ids
     issue = [e for e in entities if e.id == "issue:77"][0]
     assert issue.soft_linked_issues == ["99"]
+    assert issue.metadata["comment_count"] == 4
+    assert issue.metadata["reaction_total"] == 3
 
 
 def test_enrich_entity_minimal_uses_files_fast_path() -> None:

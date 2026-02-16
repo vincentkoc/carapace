@@ -141,6 +141,16 @@ class SQLiteStorage:
                   PRIMARY KEY (repo, entity_id, model_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_fingerprint_cache_repo_model ON fingerprint_cache(repo, model_id);
+
+                CREATE TABLE IF NOT EXISTS author_metrics_cache (
+                  repo TEXT NOT NULL,
+                  author TEXT NOT NULL,
+                  merged_pr_count INTEGER NOT NULL DEFAULT 0,
+                  trust_score REAL NOT NULL DEFAULT 0.0,
+                  computed_at TEXT NOT NULL,
+                  PRIMARY KEY (repo, author)
+                );
+                CREATE INDEX IF NOT EXISTS idx_author_metrics_cache_repo_trust ON author_metrics_cache(repo, trust_score DESC);
                 """
             )
             self._ensure_ingest_columns(conn)
@@ -267,6 +277,24 @@ class SQLiteStorage:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_latest_run_report(self, repo: str) -> EngineReport | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT r.report_json
+                FROM runs r
+                INNER JOIN entities e ON e.run_id = r.id
+                WHERE e.repo = ?
+                GROUP BY r.id
+                ORDER BY r.id DESC
+                LIMIT 1
+                """,
+                (repo,),
+            ).fetchone()
+        if row is None:
+            return None
+        return EngineReport.model_validate_json(row["report_json"])
+
     def upsert_ingest_entities(
         self,
         repo: str,
@@ -387,6 +415,71 @@ class SQLiteStorage:
         with self._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return [SourceEntity.model_validate_json(row["payload_json"]) for row in rows]
+
+    def load_ingested_entities_by_ids(self, repo: str, entity_ids: list[str]) -> dict[str, SourceEntity]:
+        if not entity_ids:
+            return {}
+        placeholders = ",".join("?" for _ in entity_ids)
+        sql = f"""
+            SELECT entity_id, payload_json
+            FROM ingest_entities
+            WHERE repo = ? AND entity_id IN ({placeholders})
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, (repo, *entity_ids)).fetchall()
+        return {row["entity_id"]: SourceEntity.model_validate_json(row["payload_json"]) for row in rows}
+
+    def list_ingested_repos(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT repo
+                FROM ingest_entities
+                ORDER BY repo
+                """
+            ).fetchall()
+        return [str(row["repo"]) for row in rows]
+
+    def get_author_metrics_cache(self, repo: str, authors: list[str]) -> dict[str, dict[str, float | int | str]]:
+        if not authors:
+            return {}
+        placeholders = ",".join("?" for _ in authors)
+        sql = f"""
+            SELECT author, merged_pr_count, trust_score, computed_at
+            FROM author_metrics_cache
+            WHERE repo = ? AND author IN ({placeholders})
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, (repo, *authors)).fetchall()
+        return {
+            row["author"]: {
+                "merged_pr_count": int(row["merged_pr_count"]),
+                "trust_score": float(row["trust_score"]),
+                "computed_at": str(row["computed_at"]),
+            }
+            for row in rows
+        }
+
+    def upsert_author_metrics_cache(self, repo: str, metrics: dict[str, tuple[int, float]]) -> int:
+        if not metrics:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        rows = [(repo, author, merged_count, trust_score, now) for author, (merged_count, trust_score) in metrics.items()]
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO author_metrics_cache (
+                  repo, author, merged_pr_count, trust_score, computed_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(repo, author) DO UPDATE SET
+                  merged_pr_count=excluded.merged_pr_count,
+                  trust_score=excluded.trust_score,
+                  computed_at=excluded.computed_at
+                """,
+                rows,
+            )
+            conn.commit()
+        return len(rows)
 
     def get_ingest_state(self, repo: str) -> dict:
         with self._connect() as conn:

@@ -74,6 +74,8 @@ class GithubIssue(BaseModel):
     author_association: str | None = None
     pull_request: dict[str, Any] | None = None
     state: str = "open"
+    comments: int = 0
+    reactions: dict[str, Any] = Field(default_factory=dict)
 
 
 class GithubFile(BaseModel):
@@ -573,6 +575,7 @@ class GithubGhSourceConnector(SourceConnector):
         labels = [label.name for label in issue.labels]
         linked_issues = _extract_hard_linked_issues(issue.body or "")
         soft_linked_issues = _extract_soft_linked_issues(issue.body or "", linked_issues)
+        reaction_total = _sum_issue_reactions(issue.reactions)
         return SourceEntity(
             id=f"issue:{issue.number}",
             provider="github",
@@ -590,7 +593,12 @@ class GithubGhSourceConnector(SourceConnector):
             soft_linked_issues=soft_linked_issues,
             created_at=issue.created_at.astimezone(UTC),
             updated_at=issue.updated_at.astimezone(UTC),
-            metadata={"source": "gh"},
+            metadata={
+                "source": "gh",
+                "comment_count": issue.comments,
+                "reactions": issue.reactions,
+                "reaction_total": reaction_total,
+            },
         )
 
     @staticmethod
@@ -842,6 +850,18 @@ def _extract_soft_links_from_comments(comments: list[GithubComment], hard_links:
             continue
         merged = _merge_issue_refs(merged, _extract_soft_linked_issues(body, hard_links))
     return merged
+
+
+def _sum_issue_reactions(reactions: dict[str, Any] | None) -> int:
+    if not reactions:
+        return 0
+    total = 0
+    for key, value in reactions.items():
+        if key == "url":
+            continue
+        if isinstance(value, int):
+            total += value
+    return total
 
 
 def _extract_score_from_text(body: str) -> float:

@@ -351,3 +351,70 @@ def test_fingerprint_cache_respects_updated_at(tmp_path: Path) -> None:
     changed_entity = entity.model_copy(update={"changed_files": ["src/new.py"]})
     misses_same_timestamp = storage.load_fingerprint_cache("acme/repo", [changed_entity], model_id="test-model")
     assert misses_same_timestamp == {}
+
+
+def test_storage_latest_report_and_entity_lookup(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    config = CarapaceConfig(storage=StorageConfig(persist_runs=True, sqlite_path=str(db_path)))
+    entities = [
+        SourceEntity.model_validate(
+            {
+                "id": "pr:1",
+                "repo": "acme/repo",
+                "kind": EntityKind.PR,
+                "state": "open",
+                "title": "A",
+                "author": "alice",
+                "number": 1,
+            }
+        ),
+        SourceEntity.model_validate(
+            {
+                "id": "issue:2",
+                "repo": "acme/repo",
+                "kind": EntityKind.ISSUE,
+                "state": "open",
+                "title": "B",
+                "author": "bob",
+                "number": 2,
+            }
+        ),
+    ]
+    storage.upsert_ingest_entities("acme/repo", entities)
+
+    engine = CarapaceEngine(config=config, storage=storage)
+    report = engine.scan_entities(entities)
+    assert report.processed_entities == 2
+
+    latest = storage.get_latest_run_report("acme/repo")
+    assert latest is not None
+    assert latest.processed_entities == 2
+
+    looked_up = storage.load_ingested_entities_by_ids("acme/repo", ["pr:1", "issue:2"])
+    assert set(looked_up.keys()) == {"pr:1", "issue:2"}
+    assert looked_up["pr:1"].author == "alice"
+
+    repos = storage.list_ingested_repos()
+    assert repos == ["acme/repo"]
+
+
+def test_author_metrics_cache_roundtrip(tmp_path: Path) -> None:
+    db_path = tmp_path / "carapace.db"
+    storage = SQLiteStorage(db_path)
+
+    written = storage.upsert_author_metrics_cache(
+        "acme/repo",
+        {
+            "alice": (42, 0.93),
+            "bob": (3, 0.45),
+        },
+    )
+    assert written == 2
+
+    cache = storage.get_author_metrics_cache("acme/repo", ["alice", "bob", "carol"])
+    assert cache["alice"]["merged_pr_count"] == 42
+    assert float(cache["alice"]["trust_score"]) == 0.93
+    assert cache["bob"]["merged_pr_count"] == 3
+    assert "carol" not in cache
