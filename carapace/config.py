@@ -35,6 +35,8 @@ class LowPassConfig(BaseModel):
     pr_large_max_files: int = 40
     pr_large_max_churn: int = 5000
     pr_large_action: str = "skip"
+    pr_unenriched_max_age_hours: int | None = None
+    pr_unenriched_action: str = "suppress"
 
 
 class SimilarityConfig(BaseModel):

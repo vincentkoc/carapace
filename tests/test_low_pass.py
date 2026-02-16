@@ -88,6 +88,33 @@ def test_pr_large_changeset_skips() -> None:
     assert "PR_LARGE_CHANGESET" in out.reason_codes
 
 
+def test_pr_unenriched_old_pr_suppressed() -> None:
+    pr = _entity(
+        kind=EntityKind.PR,
+        updated_at=datetime.now(UTC) - timedelta(hours=12),
+        changed_files=[],
+        diff_hunks=[],
+    )
+    out = apply_low_pass(pr, LowPassConfig(pr_unenriched_max_age_hours=6))
+    assert out.state == FilterState.SUPPRESS
+    assert "PR_UNENRICHED" in out.reason_codes
+
+
+def test_pr_unenriched_can_be_configured_to_close() -> None:
+    pr = _entity(
+        kind=EntityKind.PR,
+        updated_at=datetime.now(UTC) - timedelta(hours=24),
+        changed_files=[],
+        diff_hunks=[],
+    )
+    out = apply_low_pass(
+        pr,
+        LowPassConfig(pr_unenriched_max_age_hours=6, pr_unenriched_action="close"),
+    )
+    assert out.state == FilterState.SKIP
+    assert out.action == LowPassAction.CLOSE
+
+
 def test_issue_template_can_be_configured_to_close() -> None:
     issue = _entity(
         kind=EntityKind.ISSUE,

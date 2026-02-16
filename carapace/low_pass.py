@@ -111,6 +111,17 @@ def _pr_large(entity: SourceEntity, cfg: LowPassConfig) -> bool:
     return file_count > cfg.pr_large_max_files or churn > cfg.pr_large_max_churn
 
 
+def _pr_unenriched(entity: SourceEntity, cfg: LowPassConfig) -> bool:
+    if entity.kind != EntityKind.PR:
+        return False
+    if cfg.pr_unenriched_max_age_hours is None:
+        return False
+    if entity.changed_files or entity.diff_hunks:
+        return False
+    cutoff = datetime.now(UTC) - timedelta(hours=cfg.pr_unenriched_max_age_hours)
+    return entity.updated_at < cutoff
+
+
 def _to_state(action: str, default: FilterState = FilterState.SUPPRESS) -> FilterState:
     normalized = (action or "").strip().lower()
     if normalized in {"close", "skip"}:
@@ -196,6 +207,17 @@ def apply_low_pass(entity: SourceEntity, cfg: LowPassConfig) -> LowPassDecision:
         return LowPassDecision(
             entity_id=entity.id,
             state=_to_state(action, default=FilterState.SKIP),
+            action=_to_action(action),
+            reason_codes=reasons,
+            priority_weight=0.0,
+        )
+
+    if _pr_unenriched(entity, cfg):
+        reasons.append("PR_UNENRICHED")
+        action = cfg.pr_unenriched_action
+        return LowPassDecision(
+            entity_id=entity.id,
+            state=_to_state(action, default=FilterState.SUPPRESS),
             action=_to_action(action),
             reason_codes=reasons,
             priority_weight=0.0,
