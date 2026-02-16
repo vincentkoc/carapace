@@ -325,3 +325,32 @@ def test_unstructured_pairs_require_very_high_semantic_and_lexical_match() -> No
     )
     edges = compute_similarity_edges({"issue:1": a, "issue:2": b}, cfg)
     assert edges == []
+
+
+def test_unstructured_pr_pairs_with_near_identical_titles_can_link() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True)
+    a = _fp(
+        "pr:1",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["feat", "searxng", "provider"],
+        title_tokens=["feat", "web", "search", "add", "searxng", "provider"],
+    )
+    b = _fp(
+        "pr:2",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["feat", "searxng", "provider"],
+        title_tokens=["feat", "web", "search", "add", "searxng", "provider"],
+    )
+    edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
+    assert len(edges) == 1
+    assert edges[0].tier.value in {"weak", "strong"}

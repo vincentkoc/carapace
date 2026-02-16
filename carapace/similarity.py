@@ -404,6 +404,14 @@ def _edge_tier(
 
     # For unstructured entities (e.g., issue templates), require very high semantic + lexical agreement.
     if not has_structure:
+        if (
+            kind_a == "pr"
+            and kind_b == "pr"
+            and breakdown.title_salient_overlap >= cfg.unstructured_pr_title_overlap_min
+            and breakdown.semantic_text >= cfg.unstructured_pr_semantic_text_min
+            and breakdown.simhash >= cfg.unstructured_pr_simhash_min
+        ):
+            return EdgeTier.WEAK
         if breakdown.hard_link_overlap >= cfg.hard_link_weak_overlap and breakdown.semantic >= cfg.hard_link_weak_semantic_min:
             return EdgeTier.WEAK
         if breakdown.soft_link_overlap > 0.0 and breakdown.semantic >= cfg.weak_semantic_min:
