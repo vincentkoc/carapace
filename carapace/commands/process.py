@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import cast
 
 from carapace.commands.common import (
     CommandRuntime,
@@ -14,6 +15,7 @@ from carapace.commands.common import (
     validate_repo_path_if_needed,
 )
 from carapace.reporting import write_report_bundle
+from carapace.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ def run_process(args: argparse.Namespace, *, runtime: CommandRuntime) -> int:
     entities = [entity for entity in entities if (config.ingest.include_closed or entity.state == "open") and (config.ingest.include_drafts or not entity.is_draft)]
     logger.info("Entities after post-enrichment state filtering: %s", len(entities))
 
-    engine = build_engine(config, storage=storage)
+    engine = build_engine(config, storage=cast(StorageBackend, storage))
     report = engine.scan_entities(entities)
     write_report_bundle(
         report,
@@ -129,4 +131,3 @@ def run_enrich(args: argparse.Namespace, *, runtime: CommandRuntime) -> int:
     )
     logger.info("Enrich-stored complete: enriched_prs=%s", enriched_count)
     return 0
-

@@ -6,8 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from carapace.commands.common import build_engine, load_config, load_json_entities
-from carapace.commands.common import CommandRuntime
+from carapace.commands.common import CommandRuntime, build_engine, load_config, load_json_entities
 from carapace.reporting import write_report_bundle
 
 logger = logging.getLogger(__name__)

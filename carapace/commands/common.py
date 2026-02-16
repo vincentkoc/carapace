@@ -6,10 +6,7 @@ import argparse
 import json
 import logging
 import os
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -18,7 +15,9 @@ from carapace.config import CarapaceConfig, load_effective_config
 from carapace.models import SourceEntity
 from carapace.pipeline import CarapaceEngine
 from carapace.repo_validation import validate_repo_path_matches
-from carapace.storage import SQLiteStorage
+from carapace.services.command_runtime import CommandRuntime
+from carapace.services.interfaces import Storage
+from carapace.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +30,6 @@ ALIAS_TO_CANONICAL = {
     "db-audit": "audit",
     "serve-ui": "serve",
 }
-
-
-@dataclass(frozen=True)
-class CommandRuntime:
-    source_connector_cls: Any
-    sink_connector_cls: Any
-    storage_cls: type[SQLiteStorage]
-    ingest_loader: Callable[..., Any]
-    enrich_entities: Callable[..., tuple[list[SourceEntity], int]]
 
 
 def default_enrich_workers() -> int:
@@ -86,7 +76,7 @@ def load_config(args: argparse.Namespace) -> CarapaceConfig:
     )
 
 
-def build_engine(config: CarapaceConfig, storage: SQLiteStorage | None = None) -> CarapaceEngine:
+def build_engine(config: CarapaceConfig, storage: StorageBackend | None = None) -> CarapaceEngine:
     return CarapaceEngine(config=config, storage=storage)
 
 
@@ -149,7 +139,7 @@ def kind_filter_from_arg(entity_kind: str) -> str | None:
 
 def load_stored_entities(
     *,
-    storage: SQLiteStorage,
+    storage: Storage,
     repo: str,
     config: CarapaceConfig,
     entity_kind: str,
@@ -185,4 +175,3 @@ def maybe_apply_routing(args: argparse.Namespace, entities: list[SourceEntity], 
         dry_run=not args.live_actions,
     )
     apply_routing_decisions(report, sink)
-

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from carapace.commands import audit, ingest, process, scan, serve, triage
-from carapace.commands.common import CommandRuntime, default_enrich_workers, normalize_command
+from carapace.commands.common import default_enrich_workers, normalize_command
 from carapace.commands.parser import build_parser as build_cli_parser
 from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector
 from carapace.enrichment import enrich_entities_if_needed
 from carapace.loader import ingest_github_to_sqlite
 from carapace.logging_utils import configure_logging
+from carapace.services.command_runtime import CommandRuntime
+from carapace.services.interfaces import Storage
 from carapace.storage import SQLiteStorage
 
 
@@ -23,10 +26,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _runtime() -> CommandRuntime:
+    def _storage_factory(db_path: str | Path) -> Storage:
+        return SQLiteStorage(db_path)
+
     return CommandRuntime(
         source_connector_cls=GithubGhSourceConnector,
         sink_connector_cls=GithubGhSinkConnector,
-        storage_cls=SQLiteStorage,
+        storage_cls=_storage_factory,
         ingest_loader=ingest_github_to_sqlite,
         enrich_entities=enrich_entities_if_needed,
     )
