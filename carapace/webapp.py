@@ -337,7 +337,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             },
         )
 
-    @app.get("/api/repos/{repo}/graph", response_class=JSONResponse)
+    @app.get("/api/repos/{repo:path}/graph", response_class=JSONResponse)
     def api_graph(
         repo: str,
         cluster_id: str | None = None,
@@ -356,7 +356,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         )
         return JSONResponse(payload)
 
-    @app.get("/api/repos/{repo}/clusters", response_class=JSONResponse)
+    @app.get("/api/repos/{repo:path}/clusters", response_class=JSONResponse)
     def api_clusters(
         repo: str,
         kind: str = Query(default="all"),
@@ -387,7 +387,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 break
         return JSONResponse({"repo": repo, "clusters": rows})
 
-    @app.get("/api/repos/{repo}/authors", response_class=JSONResponse)
+    @app.get("/api/repos/{repo:path}/authors", response_class=JSONResponse)
     def api_authors(repo: str, limit: int = Query(default=100, ge=1, le=1000)) -> JSONResponse:
         report, entities, _summaries, author_cache = _load_context(repo)
         _ = report
