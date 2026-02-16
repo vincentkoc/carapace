@@ -2,6 +2,8 @@
 
 `carapace` brings order to high-volume repositories with PR/issue fingerprinting, similarity clustering, canonical candidate selection, and low-pass noise filtering.
 
+Command API note: legacy command names (`scan-github`, `ingest-github`, `process-stored`, `enrich-stored`, `db-audit`, `serve-ui`) remain supported as aliases.
+
 ## Current Capabilities
 - Repo-level configuration via `.carapace.yaml`.
 - Typed Python core built on Pydantic models.
@@ -17,8 +19,8 @@
   - canonical ranking in each cluster
   - routing decisions (canonical, duplicate, related, suppressed)
 - Split ingest/process workflow for large repos:
-  - `ingest-github` loads entities into SQLite with resumable state
-  - `process-stored` processes from persisted ingest snapshot
+  - `ingest` loads entities into SQLite with resumable state
+  - `process` processes from persisted ingest snapshot
 - Report bundle output:
   - `triage_report.md`
   - `clusters.json`
@@ -39,7 +41,7 @@ carapace scan --input /path/to/entities.json --repo-path /path/to/repo --output-
 
 Run directly against GitHub using `gh`:
 ```bash
-carapace scan-github \
+carapace triage \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/repo \
   --max-prs 300 \
@@ -52,28 +54,28 @@ carapace scan-github \
 Stateful large-repo workflow (recommended for 3k+ PRs):
 ```bash
 # 1) Ingest into SQLite (resumable)
-carapace ingest-github \
+carapace ingest \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --max-prs 0 \
   --max-issues 0
 
 # 2) Process from stored ingest snapshot
-carapace process-stored \
+carapace process \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --entity-kind pr \
   --output-dir ./carapace-out/openclaw
 
 # 3) Audit ingest DB quality/integrity quickly
-carapace db-audit \
+carapace audit \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw
 ```
 
 Fast enrichment during processing:
 ```bash
-carapace --log-level INFO process-stored \
+carapace --log-level INFO process \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --output-dir ./carapace-out/openclaw \
@@ -94,7 +96,7 @@ Notes:
 
 Enrich-only workflow (split from scan):
 ```bash
-carapace --log-level INFO enrich-stored \
+carapace --log-level INFO enrich \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --entity-kind pr \
@@ -110,7 +112,7 @@ Enrichment watermark behavior:
 Lightweight graph UI (FastAPI + HTMX + Alpine + Cytoscape):
 ```bash
 pip install -e .[dev,ui]
-carapace serve-ui \
+carapace serve \
   --repo openclaw/openclaw \
   --repo-path /path/to/local/openclaw \
   --skip-repo-path-check \
@@ -122,10 +124,10 @@ Then open `http://127.0.0.1:8765`.
 Optional routing application:
 ```bash
 # dry run (default)
-carapace scan-github --repo openclaw/openclaw --apply-routing
+carapace triage --repo openclaw/openclaw --apply-routing
 
 # live GitHub writes (labels/comments)
-carapace scan-github --repo openclaw/openclaw --apply-routing --live-actions
+carapace triage --repo openclaw/openclaw --apply-routing --live-actions
 ```
 
 ## Config
@@ -155,10 +157,10 @@ Repo safety:
 
 Debug logging:
 ```bash
-carapace --log-level DEBUG ingest-github --repo openclaw/openclaw --repo-path /path/to/openclaw
+carapace --log-level DEBUG ingest --repo openclaw/openclaw --repo-path /path/to/openclaw
 ```
 
 Machine-readable DB audit:
 ```bash
-carapace db-audit --repo openclaw/openclaw --repo-path /path/to/openclaw --json
+carapace audit --repo openclaw/openclaw --repo-path /path/to/openclaw --json
 ```
