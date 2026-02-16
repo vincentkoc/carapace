@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,13 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         model=f"atlas-{config.embedding.model}",
     )
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    run_context_cache: dict[str, tuple[str, tuple[EngineReport, dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]]] = {}
+    ingest_context_cache: dict[str, tuple[str, tuple[dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]]] = {}
+    response_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
+    response_cache_fifo: list[tuple[str, str, str]] = []
+    max_response_cache_entries = 64
+    report_cache: dict[str, tuple[float, EngineReport]] = {}
+    report_cache_ttl_seconds = 5.0
 
     def _repo_or_default(repo: str | None) -> str:
         if repo:
@@ -61,22 +69,87 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             raise HTTPException(status_code=404, detail="No ingested repositories found")
         return repos[0]
 
-    def _load_context(repo: str) -> tuple[EngineReport, dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]:
+    def _get_cached_payload(repo: str, cache_key: str, signature: str) -> dict[str, Any] | None:
+        mem_key = (repo, cache_key, signature)
+        cached_mem = response_cache.get(mem_key)
+        if cached_mem is not None:
+            return cached_mem
+        cached_db = storage.load_json_cache(repo, cache_key, source_signature=signature)
+        if cached_db is not None:
+            response_cache[mem_key] = cached_db
+            response_cache_fifo.append(mem_key)
+            if len(response_cache_fifo) > max_response_cache_entries:
+                evicted = response_cache_fifo.pop(0)
+                response_cache.pop(evicted, None)
+        return cached_db
+
+    def _store_cached_payload(repo: str, cache_key: str, signature: str, payload: dict[str, Any]) -> None:
+        mem_key = (repo, cache_key, signature)
+        response_cache[mem_key] = payload
+        response_cache_fifo.append(mem_key)
+        if len(response_cache_fifo) > max_response_cache_entries:
+            evicted = response_cache_fifo.pop(0)
+            response_cache.pop(evicted, None)
+        storage.upsert_json_cache(repo, cache_key, source_signature=signature, payload=payload)
+
+    def _run_signature(report: EngineReport) -> str:
+        return "|".join(
+            [
+                report.generated_at.isoformat(),
+                f"clusters:{len(report.clusters)}",
+                f"edges:{len(report.edges)}",
+                f"processed:{report.processed_entities}",
+            ]
+        )
+
+    def _load_report(repo: str) -> EngineReport:
+        now = time.monotonic()
+        cached = report_cache.get(repo)
+        if cached and (now - cached[0]) <= report_cache_ttl_seconds:
+            return cached[1]
         report = storage.get_latest_run_report(repo)
         if report is None:
             raise HTTPException(status_code=404, detail=f"No run report found for repo={repo}")
+        report_cache[repo] = (now, report)
+        return report
+
+    def _load_context(repo: str, report: EngineReport | None = None) -> tuple[EngineReport, dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]:
+        run_report = report or _load_report(repo)
+        signature = _run_signature(run_report)
+        cached = run_context_cache.get(repo)
+        if cached and cached[0] == signature:
+            return cached[1]
 
         entity_ids: set[str] = set()
-        for cluster in report.clusters:
+        for cluster in run_report.clusters:
             entity_ids.update(cluster.members)
             entity_ids.update(cluster.shadow_members)
         entities = storage.load_ingested_entities_by_ids(repo, sorted(entity_ids))
-        summaries = _compute_cluster_summaries(report, entities)
+        summaries = _compute_cluster_summaries(run_report, entities)
         authors = sorted({entity.author for entity in entities.values()})
         author_cache = storage.get_author_metrics_cache(repo, authors)
-        return report, entities, summaries, author_cache
+        context = (run_report, entities, summaries, author_cache)
+        run_context_cache[repo] = (signature, context)
+        return context
+
+    def _ingest_signature(repo: str) -> str:
+        summary = storage.ingest_audit_summary(repo)
+        return "|".join(
+            [
+                f"total:{summary['total']}",
+                f"prs:{summary['by_kind'].get('pr', 0)}",
+                f"issues:{summary['by_kind'].get('issue', 0)}",
+                f"drafts:{summary['draft_prs']}",
+                f"enriched:{summary['enriched_prs']}",
+            ]
+        )
 
     def _load_ingest_context(repo: str) -> tuple[dict[str, SourceEntity], list[ClusterSummary], dict[str, dict[str, float | int | str]]]:
+        signature = _ingest_signature(repo)
+        cached = ingest_context_cache.get(repo)
+        if cached and cached[0] == signature:
+            return cached[1]
+
         ingest_entities = storage.load_ingested_entities(
             repo,
             include_closed=False,
@@ -87,7 +160,9 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         summaries = _build_ingest_linkage_summaries(repo, ingest_entities)
         authors = sorted({entity.author for entity in ingest_entities})
         author_cache = storage.get_author_metrics_cache(repo, authors)
-        return entities, summaries, author_cache
+        context = (entities, summaries, author_cache)
+        ingest_context_cache[repo] = (signature, context)
+        return context
 
     def _cluster_maps_from_summaries(summaries: list[ClusterSummary]) -> tuple[dict[str, str], set[str], dict[str, int]]:
         cluster_by_entity: dict[str, str] = {}
@@ -169,13 +244,31 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         repo: str,
         cluster_id: str | None = None,
         min_edge_score: float = Query(default=0.15, ge=0.0, le=1.0),
-        fallback_max_entities: int = Query(default=300, ge=50, le=5000),
-        max_clusters: int = Query(default=60, ge=10, le=2000),
+        fallback_max_entities: int = Query(default=200, ge=50, le=5000),
+        max_clusters: int = Query(default=30, ge=10, le=2000),
         include_authors: bool = Query(default=False),
+        max_similarity_edges: int = Query(default=2500, ge=100, le=50000),
     ) -> JSONResponse:
         payload: dict[str, Any]
         try:
-            report, entities, summaries, author_cache = _load_context(repo)
+            report = _load_report(repo)
+            run_sig = _run_signature(report)
+            graph_sig = "|".join(
+                [
+                    run_sig,
+                    f"cluster:{cluster_id or 'all'}",
+                    f"min_edge:{min_edge_score:.4f}",
+                    f"fallback_max:{fallback_max_entities}",
+                    f"max_clusters:{max_clusters}",
+                    f"authors:{1 if include_authors else 0}",
+                    f"max_sim_edges:{max_similarity_edges}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "graph_v2", graph_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+
+            report, entities, summaries, author_cache = _load_context(repo, report=report)
             summary_map = {summary.cluster_id: summary for summary in summaries}
             payload = _build_graph_payload(
                 repo=repo,
@@ -187,6 +280,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 min_edge_score=min_edge_score,
                 max_clusters=max_clusters,
                 include_authors=include_authors,
+                max_similarity_edges=max_similarity_edges,
             )
             if payload["node_count"] == 0:
                 ingest_entities = storage.load_ingested_entities(
@@ -204,7 +298,23 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     max_entities=fallback_max_entities,
                     include_authors=include_authors,
                 )
+            _store_cached_payload(repo, "graph_v2", graph_sig, payload)
         except HTTPException:
+            ingest_sig = _ingest_signature(repo)
+            graph_sig = "|".join(
+                [
+                    ingest_sig,
+                    f"cluster:{cluster_id or 'all'}",
+                    f"min_edge:{min_edge_score:.4f}",
+                    f"fallback_max:{fallback_max_entities}",
+                    f"max_clusters:{max_clusters}",
+                    f"authors:{1 if include_authors else 0}",
+                    f"max_sim_edges:{max_similarity_edges}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "graph_ingest_v2", graph_sig)
+            if cached is not None:
+                return JSONResponse(cached)
             ingest_entities = storage.load_ingested_entities(
                 repo,
                 include_closed=False,
@@ -222,6 +332,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 max_entities=fallback_max_entities,
                 include_authors=include_authors,
             )
+            _store_cached_payload(repo, "graph_ingest_v2", graph_sig, payload)
         return JSONResponse(payload)
 
     @app.get("/api/v1/repos/{repo:path}/graph/cluster-map", response_class=JSONResponse)
@@ -230,11 +341,26 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         repo: str,
         kind: str = Query(default="all"),
         min_members: int = Query(default=2, ge=1),
-        max_clusters: int = Query(default=120, ge=10, le=2000),
-        max_bridges: int = Query(default=800, ge=0, le=5000),
+        max_clusters: int = Query(default=60, ge=10, le=2000),
+        max_bridges: int = Query(default=400, ge=0, le=5000),
     ) -> JSONResponse:
         try:
-            report, entities, summaries, _ = _load_context(repo)
+            report = _load_report(repo)
+            run_sig = _run_signature(report)
+            payload_sig = "|".join(
+                [
+                    run_sig,
+                    f"kind:{kind}",
+                    f"min_members:{min_members}",
+                    f"max_clusters:{max_clusters}",
+                    f"max_bridges:{max_bridges}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "cluster_map_v2", payload_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+
+            report, entities, summaries, _ = _load_context(repo, report=report)
             payload = _build_cluster_map_payload(
                 repo=repo,
                 report=report,
@@ -257,7 +383,21 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     max_bridges=max_bridges,
                     mode="cluster_map_ingest",
                 )
+            _store_cached_payload(repo, "cluster_map_v2", payload_sig, payload)
         except HTTPException:
+            ingest_sig = _ingest_signature(repo)
+            payload_sig = "|".join(
+                [
+                    ingest_sig,
+                    f"kind:{kind}",
+                    f"min_members:{min_members}",
+                    f"max_clusters:{max_clusters}",
+                    f"max_bridges:{max_bridges}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "cluster_map_ingest_v2", payload_sig)
+            if cached is not None:
+                return JSONResponse(cached)
             entities, ingest_summaries, _ = _load_ingest_context(repo)
             payload = _build_cluster_map_from_summaries(
                 repo=repo,
@@ -269,6 +409,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 max_bridges=max_bridges,
                 mode="cluster_map_ingest",
             )
+            _store_cached_payload(repo, "cluster_map_ingest_v2", payload_sig, payload)
         return JSONResponse(payload)
 
     @app.get("/api/v1/repos/{repo:path}/graph/atlas", response_class=JSONResponse)
@@ -320,7 +461,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         max_updated_at = max(entity.updated_at.isoformat() for entity in entities)
         signature = f"run:{run_id or 0}|count:{len(entities)}|updated:{max_updated_at}|kind:{kind}|edges:{1 if include_edges else 0}|k:{edge_k}|dist:{edge_max_distance:.4f}|min_signal:{min_signal:.4f}|max_nodes:{max_nodes}"
         cache_key = "graph_atlas_v1"
-        cached = storage.load_json_cache(repo, cache_key, source_signature=signature)
+        cached = _get_cached_payload(repo, cache_key, signature)
         if cached is not None:
             return JSONResponse(cached)
 
@@ -337,12 +478,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
             min_signal=min_signal,
             max_nodes=max_nodes,
         )
-        storage.upsert_json_cache(
-            repo,
-            cache_key,
-            source_signature=signature,
-            payload=payload,
-        )
+        _store_cached_payload(repo, cache_key, signature, payload)
         return JSONResponse(payload)
 
     @app.get("/api/v1/repos/{repo:path}/clusters", response_class=JSONResponse)
@@ -353,6 +489,36 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         min_members: int = Query(default=2, ge=1),
         limit: int = Query(default=200, ge=1, le=2000),
     ) -> JSONResponse:
+        cache_sig: str | None = None
+        cache_key: str = "clusters_v2"
+        try:
+            report = _load_report(repo)
+            cache_sig = "|".join(
+                [
+                    _run_signature(report),
+                    f"kind:{kind}",
+                    f"min_members:{min_members}",
+                    f"limit:{limit}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "clusters_v2", cache_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+        except HTTPException:
+            cache_key = "clusters_ingest_v2"
+            ingest_sig = _ingest_signature(repo)
+            cache_sig = "|".join(
+                [
+                    ingest_sig,
+                    f"kind:{kind}",
+                    f"min_members:{min_members}",
+                    f"limit:{limit}",
+                ]
+            )
+            cached = _get_cached_payload(repo, "clusters_ingest_v2", cache_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+
         try:
             _report, entities, summaries, _author_cache = _load_context(repo)
         except HTTPException:
@@ -388,7 +554,10 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     "duplicate_pressure": round(summary.duplicate_pressure, 3),
                 }
             )
-        return JSONResponse({"repo": repo, "clusters": rows})
+        payload = {"repo": repo, "clusters": rows}
+        if cache_sig is not None:
+            _store_cached_payload(repo, cache_key, cache_sig, payload)
+        return JSONResponse(payload)
 
     @app.get("/api/v1/repos/{repo:path}/clusters/{cluster_id}/detail", response_class=JSONResponse)
     @app.get("/api/repos/{repo:path}/clusters/{cluster_id}/detail", response_class=JSONResponse)
@@ -399,6 +568,34 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         include_authors: bool = Query(default=False),
     ) -> JSONResponse:
         payload: dict[str, Any]
+        cache_key = "cluster_detail_v2"
+        try:
+            report = _load_report(repo)
+            detail_sig = "|".join(
+                [
+                    _run_signature(report),
+                    f"cluster:{cluster_id}",
+                    f"min_edge:{min_edge_score:.4f}",
+                    f"authors:{1 if include_authors else 0}",
+                ]
+            )
+            cached = _get_cached_payload(repo, cache_key, detail_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+        except HTTPException:
+            cache_key = "cluster_detail_ingest_v2"
+            detail_sig = "|".join(
+                [
+                    _ingest_signature(repo),
+                    f"cluster:{cluster_id}",
+                    f"min_edge:{min_edge_score:.4f}",
+                    f"authors:{1 if include_authors else 0}",
+                ]
+            )
+            cached = _get_cached_payload(repo, cache_key, detail_sig)
+            if cached is not None:
+                return JSONResponse(cached)
+
         try:
             report, entities, summaries, author_cache = _load_context(repo)
             if cluster_id.startswith("ingest-cluster-"):
@@ -436,6 +633,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 author_cache=ingest_author_cache,
                 include_authors=include_authors,
             )
+        _store_cached_payload(repo, cache_key, detail_sig, payload)
         return JSONResponse(payload)
 
     @app.get("/api/v1/repos/{repo:path}/authors", response_class=JSONResponse)

@@ -899,6 +899,7 @@ def _build_graph_payload(
     min_edge_score: float,
     max_clusters: int,
     include_authors: bool,
+    max_similarity_edges: int,
 ) -> dict[str, Any]:
     include_members: set[str] = set()
     include_clusters: set[str] = set()
@@ -1079,7 +1080,10 @@ def _build_graph_payload(
         if bridge_count >= 2000:
             break
 
+    similarity_edges_added = 0
     for edge in report.edges:
+        if similarity_edges_added >= max_similarity_edges:
+            break
         if edge.score < min_edge_score:
             continue
         if edge.entity_a not in include_members or edge.entity_b not in include_members:
@@ -1096,6 +1100,7 @@ def _build_graph_payload(
                 }
             }
         )
+        similarity_edges_added += 1
 
     return {
         "repo": repo,
@@ -1211,5 +1216,4 @@ def _build_ingest_fallback_graph_payload(
         "edge_count": len(edges),
         "elements": {"nodes": nodes, "edges": edges},
     }
-
 
