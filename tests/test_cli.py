@@ -7,6 +7,27 @@ from carapace.connectors.github_gh import GithubRateLimitError
 from carapace.models import CIStatus, EntityKind, SourceEntity
 
 
+def test_cli_parser_supports_simple_command_aliases() -> None:
+    parser = cli.build_parser()
+    parsed = parser.parse_args(["ingest", "--repo", "acme/repo"])
+    assert parsed.command == "ingest"
+
+    parsed_process = parser.parse_args(["process", "--repo", "acme/repo"])
+    assert parsed_process.command == "process"
+
+    parsed_serve = parser.parse_args(["serve", "--repo-path", "."])
+    assert parsed_serve.command == "serve"
+
+
+def test_default_enrich_workers_honors_env(monkeypatch) -> None:
+    monkeypatch.setenv("CARAPACE_ENRICH_WORKERS", "11")
+    assert cli._default_enrich_workers() == 11  # noqa: SLF001 - module helper test
+
+    monkeypatch.setenv("CARAPACE_ENRICH_WORKERS", "bad")
+    value = cli._default_enrich_workers()  # noqa: SLF001 - module helper test
+    assert value >= 4
+
+
 def test_scan_command_writes_reports(tmp_path: Path) -> None:
     input_path = tmp_path / "entities.json"
     out_dir = tmp_path / "out"

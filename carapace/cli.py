@@ -27,6 +27,19 @@ from carapace.storage import SQLiteStorage
 logger = logging.getLogger(__name__)
 
 
+def _default_enrich_workers() -> int:
+    raw = os.environ.get("CARAPACE_ENRICH_WORKERS")
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+    cpu = os.cpu_count() or 8
+    return max(4, min(16, cpu))
+
+
 def _load_json_entities(path: Path) -> list[SourceEntity]:
     raw = json.loads(path.read_text())
     if not isinstance(raw, list):
@@ -140,13 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="Run offline scan from JSON entity snapshot")
+    scan = sub.add_parser("scan", aliases=["run"], help="Run offline scan from JSON entity snapshot")
     scan.add_argument("--input", required=True, help="Path to input JSON array of entities")
     scan.add_argument("--output-dir", default="./carapace-out", help="Output directory")
     _add_common_config_flags(scan)
     _add_report_flags(scan)
 
-    ingest = sub.add_parser("ingest-github", help="Ingest GitHub entities into SQLite with resumable state")
+    ingest = sub.add_parser("ingest-github", aliases=["ingest"], help="Ingest GitHub entities into SQLite with resumable state")
     ingest.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     ingest.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
     ingest.add_argument("--max-prs", type=int, default=0, help="Max PRs to ingest (0 = no explicit cap)")
@@ -155,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_repo_validation_flags(ingest)
     _add_github_rate_limit_flags(ingest)
 
-    process = sub.add_parser("process-stored", help="Process previously ingested entities from SQLite")
+    process = sub.add_parser("process-stored", aliases=["process"], help="Process previously ingested entities from SQLite")
     process.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     process.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
     process.add_argument("--output-dir", default="./carapace-out", help="Output directory")
@@ -192,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument(
         "--enrich-workers",
         type=int,
-        default=6,
+        default=_default_enrich_workers(),
         help="Parallel workers used for enrichment API calls",
     )
     process.add_argument(
@@ -224,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_github_rate_limit_flags(process)
     _add_report_flags(process)
 
-    enrich = sub.add_parser("enrich-stored", help="Enrich stored PR details in SQLite without running scan")
+    enrich = sub.add_parser("enrich-stored", aliases=["enrich"], help="Enrich stored PR details in SQLite without running scan")
     enrich.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     enrich.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
     enrich.add_argument(
@@ -254,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument(
         "--enrich-workers",
         type=int,
-        default=6,
+        default=_default_enrich_workers(),
         help="Parallel workers used for enrichment API calls",
     )
     enrich.add_argument(
@@ -279,7 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_repo_validation_flags(enrich)
     _add_github_rate_limit_flags(enrich)
 
-    audit = sub.add_parser("db-audit", help="Show ingest DB audit and integrity summary for a repo")
+    audit = sub.add_parser("db-audit", aliases=["audit"], help="Show ingest DB audit and integrity summary for a repo")
     audit.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     audit.add_argument(
         "--json",
@@ -289,7 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_flags(audit)
     _add_repo_validation_flags(audit)
 
-    serve_ui = sub.add_parser("serve-ui", help="Run lightweight graph UI/API over stored SQLite data")
+    serve_ui = sub.add_parser("serve-ui", aliases=["serve"], help="Run lightweight graph UI/API over stored SQLite data")
     serve_ui.add_argument("--repo", help="Default repo slug shown in UI, e.g. owner/repo")
     serve_ui.add_argument("--host", default="127.0.0.1", help="Bind host")
     serve_ui.add_argument("--port", type=int, default=8765, help="Bind port")
@@ -301,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_flags(serve_ui)
     _add_repo_validation_flags(serve_ui)
 
-    scan_github = sub.add_parser("scan-github", help="One-shot GitHub ingest+process")
+    scan_github = sub.add_parser("scan-github", aliases=["triage"], help="One-shot GitHub ingest+process")
     scan_github.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     scan_github.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
     scan_github.add_argument("--max-prs", type=int, default=200, help="Max open PRs to ingest")
@@ -874,6 +887,16 @@ def _run_serve_ui(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    alias_to_canonical = {
+        "run": "scan",
+        "ingest": "ingest-github",
+        "process": "process-stored",
+        "enrich": "enrich-stored",
+        "triage": "scan-github",
+        "audit": "db-audit",
+        "serve": "serve-ui",
+    }
+    args.command = alias_to_canonical.get(args.command, args.command)
     configure_logging(args.log_level)
 
     if args.command == "scan":
