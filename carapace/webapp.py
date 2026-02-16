@@ -255,7 +255,111 @@ def _build_graph_payload(
 
     return {
         "repo": repo,
+        "mode": "run",
         "cluster_id": cluster_id,
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "elements": {"nodes": nodes, "edges": edges},
+    }
+
+
+def _build_ingest_fallback_graph_payload(
+    *,
+    repo: str,
+    entities: list[SourceEntity],
+    author_cache: dict[str, dict[str, float | int | str]],
+    max_entities: int,
+) -> dict[str, Any]:
+    selected = sorted(entities, key=lambda item: item.updated_at, reverse=True)[:max_entities]
+    if not selected:
+        return {
+            "repo": repo,
+            "mode": "ingest_fallback",
+            "cluster_id": None,
+            "node_count": 0,
+            "edge_count": 0,
+            "elements": {"nodes": [], "edges": []},
+        }
+
+    issue_index = {entity.number: entity.id for entity in selected if entity.kind.value == "issue" and entity.number is not None}
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    author_nodes: set[str] = set()
+
+    for entity in selected:
+        trust_cache = author_cache.get(entity.author, {})
+        merged_pr_count = int(trust_cache.get("merged_pr_count", 0) or 0)
+        cached_trust = float(trust_cache.get("trust_score", 0.0) or 0.0)
+        trust_score = max(_association_trust(entity.author_association), cached_trust)
+
+        nodes.append(
+            {
+                "data": {
+                    "id": entity.id,
+                    "kind": entity.kind.value,
+                    "label": entity.title,
+                    "author": entity.author,
+                    "state": entity.state,
+                    "trust_score": round(trust_score, 3),
+                    "merged_pr_count": merged_pr_count,
+                    "comment_count": int(entity.metadata.get("comment_count", 0) or 0),
+                    "reaction_total": int(entity.metadata.get("reaction_total", 0) or 0),
+                    "size": 20 if entity.kind.value == "pr" else 18,
+                }
+            }
+        )
+
+        author_id = f"author:{entity.author}"
+        if author_id not in author_nodes:
+            author_nodes.add(author_id)
+            nodes.append(
+                {
+                    "data": {
+                        "id": author_id,
+                        "kind": "author",
+                        "label": entity.author,
+                        "trust_score": round(trust_score, 3),
+                        "merged_pr_count": merged_pr_count,
+                        "size": 16 + (trust_score * 10.0),
+                    }
+                }
+            )
+
+        edges.append(
+            {
+                "data": {
+                    "id": f"authored_by:{entity.id}:{author_id}",
+                    "source": entity.id,
+                    "target": author_id,
+                    "kind": "authored_by",
+                    "weight": round(trust_score, 3),
+                }
+            }
+        )
+
+        linked_issue_ids = set(entity.linked_issues) | set(entity.soft_linked_issues)
+        for raw in linked_issue_ids:
+            if not raw.isdigit():
+                continue
+            issue_num = int(raw)
+            issue_id = issue_index.get(issue_num)
+            if issue_id and issue_id != entity.id:
+                edges.append(
+                    {
+                        "data": {
+                            "id": f"links:{entity.id}:{issue_id}:{raw}",
+                            "source": entity.id,
+                            "target": issue_id,
+                            "kind": "references",
+                            "weight": 1.0,
+                        }
+                    }
+                )
+
+    return {
+        "repo": repo,
+        "mode": "ingest_fallback",
+        "cluster_id": None,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "elements": {"nodes": nodes, "edges": edges},
@@ -342,18 +446,53 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         repo: str,
         cluster_id: str | None = None,
         min_edge_score: float = Query(default=0.15, ge=0.0, le=1.0),
+        fallback_max_entities: int = Query(default=1200, ge=50, le=5000),
     ) -> JSONResponse:
-        report, entities, summaries, author_cache = _load_context(repo)
-        summary_map = {summary.cluster_id: summary for summary in summaries}
-        payload = _build_graph_payload(
-            repo=repo,
-            report=report,
-            entities=entities,
-            summaries=summary_map,
-            author_cache=author_cache,
-            cluster_id=cluster_id,
-            min_edge_score=min_edge_score,
-        )
+        payload: dict[str, Any]
+        try:
+            report, entities, summaries, author_cache = _load_context(repo)
+            summary_map = {summary.cluster_id: summary for summary in summaries}
+            payload = _build_graph_payload(
+                repo=repo,
+                report=report,
+                entities=entities,
+                summaries=summary_map,
+                author_cache=author_cache,
+                cluster_id=cluster_id,
+                min_edge_score=min_edge_score,
+            )
+            if payload["node_count"] == 0:
+                ingest_entities = storage.load_ingested_entities(
+                    repo,
+                    include_closed=False,
+                    include_drafts=False,
+                    kind=None,
+                )
+                authors = sorted({entity.author for entity in ingest_entities})
+                author_cache = storage.get_author_metrics_cache(repo, authors)
+                payload = _build_ingest_fallback_graph_payload(
+                    repo=repo,
+                    entities=ingest_entities,
+                    author_cache=author_cache,
+                    max_entities=fallback_max_entities,
+                )
+        except HTTPException:
+            ingest_entities = storage.load_ingested_entities(
+                repo,
+                include_closed=False,
+                include_drafts=False,
+                kind=None,
+            )
+            if not ingest_entities:
+                raise
+            authors = sorted({entity.author for entity in ingest_entities})
+            author_cache = storage.get_author_metrics_cache(repo, authors)
+            payload = _build_ingest_fallback_graph_payload(
+                repo=repo,
+                entities=ingest_entities,
+                author_cache=author_cache,
+                max_entities=fallback_max_entities,
+            )
         return JSONResponse(payload)
 
     @app.get("/api/repos/{repo:path}/clusters", response_class=JSONResponse)
