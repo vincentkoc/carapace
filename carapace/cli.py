@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
@@ -851,11 +852,22 @@ def _run_serve_ui(args: argparse.Namespace) -> int:
     except ImportError as exc:  # pragma: no cover - dependency/runtime
         raise RuntimeError("Missing optional UI dependencies. Install with: pip install 'carapace[ui]'") from exc
 
-    from carapace.webapp import create_app
-
-    app = create_app(config)
     logger.info("Starting UI on http://%s:%s (repo=%s)", args.host, args.port, args.repo or "auto")
-    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, log_level=args.log_level.lower())
+    if args.reload:
+        os.environ["CARAPACE_REPO_PATH"] = str(args.repo_path)
+        uvicorn.run(
+            "carapace.webapp:create_app_from_env",
+            host=args.host,
+            port=args.port,
+            reload=True,
+            factory=True,
+            log_level=args.log_level.lower(),
+        )
+    else:
+        from carapace.webapp import create_app
+
+        app = create_app(config)
+        uvicorn.run(app, host=args.host, port=args.port, reload=False, log_level=args.log_level.lower())
     return 0
 
 

@@ -106,3 +106,47 @@ def test_webapp_graph_falls_back_to_ingest_when_run_has_no_multi_clusters(tmp_pa
     assert graph_with_authors.status_code == 200
     payload_with_authors = graph_with_authors.json()
     assert payload_with_authors["node_count"] >= 2  # issue + author node
+
+
+def test_webapp_factory_from_env_loads_repo_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from carapace.webapp import create_app_from_env
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    db_path = repo_root / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    (repo_root / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: true
+"""
+    )
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "openclaw/openclaw",
+        [
+            SourceEntity.model_validate(
+                {
+                    "id": "issue:1",
+                    "repo": "openclaw/openclaw",
+                    "kind": EntityKind.ISSUE,
+                    "state": "open",
+                    "number": 1,
+                    "title": "A",
+                    "author": "alice",
+                }
+            )
+        ],
+    )
+
+    monkeypatch.setenv("CARAPACE_REPO_PATH", str(repo_root))
+    app = create_app_from_env()
+    client = TestClient(app)
+    res = client.get("/api/repos/openclaw/openclaw/graph")
+    assert res.status_code == 200

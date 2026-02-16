@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from carapace.config import CarapaceConfig
+from carapace.config import CarapaceConfig, load_effective_config
 from carapace.models import EngineReport, SourceEntity
 from carapace.storage import SQLiteStorage
 
@@ -618,3 +619,10 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         return JSONResponse({"repo": repo, "authors": rows[:limit]})
 
     return app
+
+
+def create_app_from_env() -> FastAPI:
+    """Uvicorn factory entrypoint for --reload mode."""
+    repo_path = os.environ.get("CARAPACE_REPO_PATH", ".")
+    config = load_effective_config(repo_path=repo_path)
+    return create_app(config)
