@@ -10,41 +10,285 @@
     <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
     <style>
       :root {
-        --bg: #f4f3ed;
-        --panel: #fffdf7;
-        --line: #dad5c8;
-        --text: #15212b;
-        --muted: #607080;
-        --accent: #0f766e;
+        --bg: #f3f4f7;
+        --bg-accent: #ebeef7;
+        --panel: #fcfdff;
+        --panel-alt: #f7f9ff;
+        --line: #d9dde9;
+        --text: #101828;
+        --muted: #5e6678;
+        --accent: #3b82f6;
+        --accent-soft: #dbeafe;
+        --gold: #b7791f;
+        --gold-soft: #fff2cc;
+        --danger: #d92d20;
       }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1118;
+          --bg-accent: #141b27;
+          --panel: #111827;
+          --panel-alt: #0f172a;
+          --line: #273345;
+          --text: #e5e7eb;
+          --muted: #99a7bc;
+          --accent: #60a5fa;
+          --accent-soft: #1f2d48;
+          --gold: #fbbf24;
+          --gold-soft: #3b2f10;
+          --danger: #fb7185;
+        }
+      }
+
       * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; }
-      .layout { display: grid; grid-template-columns: 420px 1fr; height: 100vh; }
-      .sidebar { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 14px; }
-      .main { display: grid; grid-template-rows: auto 1fr 1fr; min-height: 0; }
-      .toolbar { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 12px; flex-wrap: wrap; }
-      .toolbar input, .toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-      .card { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px; margin-bottom: 8px; }
-      .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-      .muted { color: var(--muted); font-size: 12px; }
-      .pill { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
-      .graph-wrap { min-height: 0; border-top: 1px solid var(--line); background: #fff; }
-      .graph-title { font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fbfaf6; display: flex; justify-content: space-between; }
-      .graph { width: 100%; height: calc(100% - 37px); }
-      button { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; }
-      button:hover { border-color: var(--accent); color: var(--accent); }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        font-family: "Avenir Next", "Segoe UI", "Inter", sans-serif;
+        background:
+          radial-gradient(circle at 12% 8%, var(--bg-accent), transparent 40%),
+          radial-gradient(circle at 86% 10%, var(--bg-accent), transparent 35%),
+          var(--bg);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 380px 1fr;
+        height: 100vh;
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 92%, transparent);
+        backdrop-filter: blur(8px);
+        overflow: auto;
+        padding: 14px;
+      }
+
+      .main {
+        display: grid;
+        grid-template-rows: auto minmax(280px, 43vh) minmax(280px, 1fr);
+        min-height: 0;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+        backdrop-filter: blur(6px);
+        padding: 10px 12px;
+        flex-wrap: wrap;
+      }
+
+      .toolbar input,
+      .toolbar select {
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-alt);
+        color: var(--text);
+      }
+
+      .toolbar .grow { flex: 1; min-width: 160px; }
+
+      .title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .subtle {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .filter-row {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 1fr 86px 100px;
+        margin: 10px 0;
+      }
+
+      .filter-row input,
+      .filter-row select {
+        width: 100%;
+        min-width: 0;
+        padding: 7px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-alt);
+        color: var(--text);
+      }
+
+      .queue-search {
+        width: 100%;
+        margin-bottom: 10px;
+        padding: 7px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-alt);
+        color: var(--text);
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(170deg, var(--panel-alt), var(--panel));
+        padding: 10px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+      }
+
+      .card:hover {
+        border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+        transform: translateY(-1px);
+      }
+
+      .card.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent) inset;
+      }
+
+      .card.canonical {
+        border-left: 4px solid var(--gold);
+      }
+
+      .cluster-id {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      .cluster-title {
+        font-size: 13px;
+        line-height: 1.35;
+        margin-top: 4px;
+      }
+
+      .card-meta {
+        margin-top: 8px;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .pill {
+        display: inline-block;
+        font-size: 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 8px;
+        color: var(--muted);
+      }
+
+      .pill.gold {
+        border-color: color-mix(in srgb, var(--gold) 45%, var(--line));
+        background: color-mix(in srgb, var(--gold-soft) 65%, transparent);
+        color: var(--gold);
+      }
+
+      .graph-wrap {
+        min-height: 0;
+        border-top: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+      }
+
+      .graph-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel-alt) 88%, transparent);
+      }
+
+      .graph-title-main {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .graph {
+        width: 100%;
+        height: calc(100% - 42px);
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: var(--panel-alt);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .legend {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 8px 0 12px;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+
+      .selected-summary {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 9px;
+        background: color-mix(in srgb, var(--panel-alt) 90%, transparent);
+        margin-bottom: 10px;
+      }
+
+      .empty {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 8px;
+      }
     </style>
   </head>
   <body x-data="triagePage()" x-init="init()">
     <div class="layout">
       <aside class="sidebar">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 style="margin:0;">Resolve Queue</h2>
-          <span class="muted" x-text="repo"></span>
+        <h2 class="title">Carapace Graph Workbench</h2>
+        <div class="subtle" style="margin:6px 0 10px;">
+          Queue-first triage. Top map = cluster topology. Bottom graph = selected cluster detail.
         </div>
-        <div class="muted" style="margin:6px 0 12px;">Queue-first triage. Graph is drill-down only.</div>
 
-        <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <div class="selected-summary" x-show="selectedClusterMeta" x-cloak>
+          <div class="cluster-id" x-text="selectedClusterMeta ? ('#' + selectedClusterMeta.cluster_id) : ''"></div>
+          <div class="cluster-title" x-text="selectedClusterMeta ? selectedCanonicalSnippet(selectedClusterMeta) : ''"></div>
+          <div class="card-meta" x-show="selectedClusterMeta">
+            <span class="pill" x-text="selectedClusterMeta ? selectedClusterMeta.cluster_type : ''"></span>
+            <span class="pill gold" x-text="selectedClusterMeta ? ('members ' + selectedClusterMeta.member_count) : ''"></span>
+            <span class="pill" x-text="selectedClusterMeta ? ('priority ' + selectedClusterMeta.priority) : ''"></span>
+          </div>
+        </div>
+
+        <div class="filter-row">
           <select x-model="kind" @change="reloadAll()">
             <option value="all">all</option>
             <option value="duplicate_candidate">duplicate_candidate</option>
@@ -55,21 +299,31 @@
           <input type="number" min="10" max="2000" x-model.number="maxClusters" @change="reloadAll()" title="max clusters" />
         </div>
 
+        <input class="queue-search" type="search" x-model="queueQuery" @input="applyQueueFilter()" placeholder="Filter by id, canonical, type..." />
+
+        <div class="legend">
+          <span class="legend-item"><span class="dot" style="background:#3b82f6"></span>PR</span>
+          <span class="legend-item"><span class="dot" style="background:#ef4444"></span>Issue</span>
+          <span class="legend-item"><span class="dot" style="background:#a855f7"></span>Author</span>
+          <span class="legend-item"><span class="dot" style="background:var(--gold)"></span>Canonical</span>
+        </div>
+
         <template x-for="cluster in clusters" :key="cluster.cluster_id">
-          <div class="card" :class="{active: selectedClusterId===cluster.cluster_id}" @click="selectCluster(cluster.cluster_id)">
+          <div class="card" :class="{active: selectedClusterId===cluster.cluster_id, canonical: !!cluster.canonical}" @click="selectCluster(cluster.cluster_id)">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-              <div style="font-weight:600;" x-text="cluster.cluster_id"></div>
+              <div class="cluster-id" x-text="'#' + cluster.cluster_id"></div>
               <span class="pill" x-text="cluster.cluster_type"></span>
             </div>
-            <div class="muted" style="margin-top:4px;">
-              members=<span x-text="cluster.member_count"></span>
-              priority=<span x-text="cluster.priority"></span>
+            <div class="cluster-title" x-text="selectedCanonicalSnippet(cluster)"></div>
+            <div class="card-meta">
+              <span class="pill" x-text="'members ' + cluster.member_count"></span>
+              <span class="pill" x-text="'priority ' + cluster.priority"></span>
+              <span class="pill gold" x-show="cluster.canonical" x-text="cluster.canonical || ''"></span>
             </div>
-            <div class="muted" style="margin-top:4px;">canonical=<span x-text="cluster.canonical || 'none'"></span></div>
           </div>
         </template>
 
-        <div class="muted" x-show="clusters.length===0">No clusters match filters.</div>
+        <div class="empty" x-show="clusters.length===0">No clusters match current filters.</div>
       </aside>
 
       <main class="main">
@@ -81,27 +335,36 @@
             {% endfor %}
           </select>
 
+          <label>Bridges</label>
+          <input type="number" min="0" max="5000" x-model.number="maxBridges" @change="reloadMap()" />
+
           <label>Detail edge≥</label>
           <input type="number" step="0.01" min="0" max="1" x-model.number="minDetailEdge" @change="reloadDetail()" />
 
-          <label><input type="checkbox" x-model="includeAuthors" @change="reloadDetail()" /> detail authors</label>
+          <label><input type="checkbox" x-model="includeAuthors" @change="reloadDetail()" /> authors</label>
 
           <button @click="reloadAll()">refresh</button>
-          <span class="muted" x-text="statusLine"></span>
+          <span class="subtle grow" x-text="statusLine"></span>
         </div>
 
         <section class="graph-wrap">
           <div class="graph-title">
-            <span>Cluster Map</span>
-            <span class="muted" x-text="mapStats"></span>
+            <div>
+              <div class="graph-title-main">Cluster Map</div>
+              <div class="subtle" x-text="mapHelp"></div>
+            </div>
+            <span class="subtle" x-text="mapStats"></span>
           </div>
           <div id="cluster-map" class="graph"></div>
         </section>
 
         <section class="graph-wrap">
           <div class="graph-title">
-            <span>Cluster Detail</span>
-            <span class="muted" x-text="detailStats"></span>
+            <div>
+              <div class="graph-title-main">Cluster Detail</div>
+              <div class="subtle" x-text="detailHelp"></div>
+            </div>
+            <span class="subtle" x-text="detailStats"></span>
           </div>
           <div id="cluster-detail" class="graph"></div>
         </section>
@@ -115,35 +378,147 @@
           kind: "all",
           minMembers: 2,
           maxClusters: 120,
+          maxBridges: 900,
           minDetailEdge: 0.2,
           includeAuthors: false,
+          queueQuery: "",
+          allClusters: [],
           clusters: [],
           selectedClusterId: null,
+          selectedClusterMeta: null,
           mapSigma: null,
           detailSigma: null,
+          mapGraph: null,
+          detailGraph: null,
           statusLine: "",
           mapStats: "",
           detailStats: "",
+          mapHelp: "Click a cluster to pin selection. Zoom in for canonical titles.",
+          detailHelp: "Canonical nodes are gold. Text density increases as you zoom in.",
 
           init() {
             this.reloadAll();
+            window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+              this.refreshRenderers();
+            });
           },
 
-          colorForKind(kind) {
-            if (kind === "cluster") return "#0f766e";
-            if (kind === "pr") return "#2563eb";
-            if (kind === "issue") return "#dc2626";
-            if (kind === "author") return "#7c3aed";
+          palette() {
+            const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            if (dark) {
+              return {
+                cluster: "#60a5fa",
+                pr: "#4f8cff",
+                issue: "#fb7185",
+                author: "#a78bfa",
+                canonical: "#fbbf24",
+                edgeRef: "#f59e0b",
+                edgeAuthor: "#8b5cf6",
+                edgeBridge: "#38bdf8",
+                edgeSimilarity: "#94a3b8",
+                edgeFaint: "#334155",
+                selected: "#22d3ee",
+              };
+            }
+            return {
+              cluster: "#1d4ed8",
+              pr: "#2563eb",
+              issue: "#dc2626",
+              author: "#7c3aed",
+              canonical: "#b7791f",
+              edgeRef: "#b45309",
+              edgeAuthor: "#7c3aed",
+              edgeBridge: "#0f766e",
+              edgeSimilarity: "#334155",
+              edgeFaint: "#cbd5e1",
+              selected: "#0ea5e9",
+            };
+          },
+
+          truncate(text, limit = 80) {
+            const value = String(text || "");
+            if (value.length <= limit) return value;
+            return `${value.slice(0, Math.max(0, limit - 1))}…`;
+          },
+
+          selectedCanonicalSnippet(cluster) {
+            if (!cluster) return "";
+            if (cluster.canonical_title) {
+              return this.truncate(cluster.canonical_title, 92);
+            }
+            if (cluster.canonical) {
+              return cluster.canonical;
+            }
+            return "No canonical selected yet";
+          },
+
+          applyQueueFilter() {
+            const query = this.queueQuery.trim().toLowerCase();
+            if (!query) {
+              this.clusters = [...this.allClusters];
+            } else {
+              this.clusters = this.allClusters.filter((cluster) => {
+                return [
+                  cluster.cluster_id,
+                  cluster.cluster_type,
+                  cluster.canonical,
+                  cluster.canonical_title,
+                ]
+                  .filter(Boolean)
+                  .some((value) => String(value).toLowerCase().includes(query));
+              });
+            }
+            if (!this.selectedClusterId || !this.clusters.find((row) => row.cluster_id === this.selectedClusterId)) {
+              this.selectedClusterId = this.clusters.length ? this.clusters[0].cluster_id : null;
+            }
+            this.syncSelectedMeta();
+          },
+
+          syncSelectedMeta() {
+            this.selectedClusterMeta = this.allClusters.find((row) => row.cluster_id === this.selectedClusterId) || null;
+          },
+
+          nodeColor(kind, canonical = false) {
+            const palette = this.palette();
+            if (canonical) return palette.canonical;
+            if (kind === "cluster") return palette.cluster;
+            if (kind === "pr") return palette.pr;
+            if (kind === "issue") return palette.issue;
+            if (kind === "author") return palette.author;
             return "#94a3b8";
           },
 
-          applyForce(graph, strength = -44, distance = 52, ticks = 180) {
-            const nodes = graph.nodes().map((id) => ({ id, x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") }));
+          edgeColor(kind) {
+            const palette = this.palette();
+            if (kind === "references") return palette.edgeRef;
+            if (kind === "authored_by") return palette.edgeAuthor;
+            if (kind === "cluster_bridge") return palette.edgeBridge;
+            if (kind === "similarity") return palette.edgeSimilarity;
+            return palette.edgeFaint;
+          },
+
+          edgeSize(kind, weight) {
+            if (kind === "cluster_bridge") return Math.max(0.9, Math.min(7.0, 0.9 + Math.log1p(Math.max(0, weight)) * 1.9));
+            if (kind === "similarity") return Math.max(0.8, Math.min(6.5, 0.6 + Math.max(0, weight) * 5.2));
+            if (kind === "references") return 1.4;
+            if (kind === "authored_by") return 1.0;
+            return 0.9;
+          },
+
+          applyForce(graph, strength = -44, distance = 52, ticks = 190) {
+            const nodes = graph.nodes().map((id) => ({
+              id,
+              x: graph.getNodeAttribute(id, "x"),
+              y: graph.getNodeAttribute(id, "y"),
+              size: graph.getNodeAttribute(id, "size"),
+            }));
             const links = graph.edges().map((eid) => ({ source: graph.source(eid), target: graph.target(eid) }));
-            const sim = d3.forceSimulation(nodes)
+            const sim = d3
+              .forceSimulation(nodes)
               .force("charge", d3.forceManyBody().strength(strength))
-              .force("link", d3.forceLink(links).id((d) => d.id).distance(distance).strength(0.22))
-              .force("center", d3.forceCenter(0, 0));
+              .force("link", d3.forceLink(links).id((d) => d.id).distance(distance).strength(0.23))
+              .force("center", d3.forceCenter(0, 0))
+              .force("collision", d3.forceCollide().radius((d) => Math.max(1.5, (d.size || 2) * 1.2)).iterations(2));
             sim.stop();
             for (let i = 0; i < ticks; i += 1) sim.tick();
             for (const n of nodes) graph.mergeNodeAttributes(n.id, { x: n.x, y: n.y });
@@ -158,13 +533,23 @@
             nodes.forEach((node, idx) => {
               const d = node.data || {};
               const id = String(d.id || `n-${idx}`);
+              const kind = String(d.kind || "");
+              const canonical = Boolean(d.canonical) || (mode === "cluster-map" && Boolean(d.canonical_id));
+              const baseSize = Math.max(2.2, Number(d.size || 10) / 6.2);
+              const size = canonical ? baseSize * 1.25 : baseSize;
               g.addNode(id, {
+                kind,
                 label: String(d.label || id),
-                kind: String(d.kind || ""),
-                size: Math.max(2.0, Number(d.size || 10) / 7),
-                color: this.colorForKind(String(d.kind || "")),
+                shortLabel: String(d.short_label || d.label || id),
+                canonicalTitle: String(d.canonical_title || ""),
+                canonical,
+                size,
+                color: this.nodeColor(kind, canonical),
                 x: (Math.random() - 0.5) * 60,
                 y: (Math.random() - 0.5) * 60,
+                memberCount: Number(d.member_count || 0),
+                priority: Number(d.priority || 0),
+                forceLabel: canonical,
               });
             });
 
@@ -174,24 +559,97 @@
               const target = String(d.target || "");
               if (!g.hasNode(source) || !g.hasNode(target) || source === target) return;
               const kind = String(d.kind || "");
-              const color = kind === "references" ? "#b45309"
-                : kind === "authored_by" ? "#7c3aed"
-                : kind === "cluster_bridge" ? "#0f766e"
-                : "#475569";
+              const weight = Number(d.weight || 0);
               g.addEdgeWithKey(String(d.id || `e-${idx}`), source, target, {
                 kind,
-                weight: Number(d.weight || 0),
-                size: kind === "similarity" ? Math.max(0.8, Number(d.weight || 0.2) * 2.3) : 1.0,
-                color,
+                weight,
+                tier: String(d.tier || ""),
+                size: this.edgeSize(kind, weight),
+                color: this.edgeColor(kind),
               });
             });
 
             if (mode === "cluster-map") {
-              this.applyForce(g, -34, 42, 140);
+              this.applyForce(g, -30, 40, 140);
             } else {
-              this.applyForce(g, -48, 54, 200);
+              this.applyForce(g, -52, 56, 210);
             }
             return g;
+          },
+
+          labelForNode(attrs, ratio, target, highlighted) {
+            const title = String(attrs.label || "");
+            const shortLabel = String(attrs.shortLabel || title);
+            const canonicalTitle = String(attrs.canonicalTitle || "");
+
+            if (target === "map") {
+              if (ratio > 2.2 && !highlighted) return "";
+              if (ratio > 1.25) return shortLabel;
+              if (ratio > 0.72) {
+                if (canonicalTitle) return `${shortLabel}: ${this.truncate(canonicalTitle, 42)}`;
+                return this.truncate(shortLabel, 42);
+              }
+              if (canonicalTitle) return `${shortLabel} • ${this.truncate(canonicalTitle, 88)}`;
+              return this.truncate(title, 88);
+            }
+
+            if (ratio > 2.5 && !highlighted && attrs.kind !== "author") return "";
+            if (ratio > 1.6 && attrs.kind === "author") return "";
+            if (ratio > 1.6) return this.truncate(title, 20);
+            if (ratio > 0.95) return this.truncate(title, 44);
+            return this.truncate(title, 92);
+          },
+
+          reduceNode(target, node, attrs, view) {
+            const reduced = { ...attrs };
+            const ratio = view.zoomRatio || 1;
+            const hovered = view.hoverNode === node;
+            const selectedCluster = target === "map" && attrs.kind === "cluster" && node === this.selectedClusterId;
+            const highlighted = hovered || selectedCluster || Boolean(attrs.canonical);
+
+            if (selectedCluster) {
+              reduced.size = attrs.size * 1.34;
+              reduced.color = this.palette().selected;
+              reduced.zIndex = 40;
+              reduced.forceLabel = true;
+            } else if (attrs.canonical) {
+              reduced.color = this.palette().canonical;
+              reduced.size = attrs.size * 1.15;
+              reduced.zIndex = 30;
+              reduced.forceLabel = ratio < 1.35;
+            }
+
+            if (hovered) {
+              reduced.size = (reduced.size || attrs.size) * 1.12;
+              reduced.zIndex = 60;
+              reduced.forceLabel = true;
+            }
+
+            reduced.label = this.labelForNode(attrs, ratio, target, highlighted);
+            return reduced;
+          },
+
+          reduceEdge(target, edge, attrs, view, graph) {
+            const reduced = { ...attrs };
+            const ratio = view.zoomRatio || 1;
+
+            if (target === "map" && attrs.kind === "cluster_bridge") {
+              if (ratio > 1.6 && attrs.weight < 2.0) reduced.hidden = true;
+              if (ratio > 1.25 && attrs.weight < 1.2) reduced.hidden = true;
+            }
+
+            if (target === "detail") {
+              if (attrs.kind === "authored_by" && ratio > 1.3) reduced.hidden = true;
+              if (attrs.kind === "similarity" && attrs.weight < this.minDetailEdge + 0.05 && ratio > 1.4) reduced.hidden = true;
+            }
+
+            if (this.selectedClusterId && target === "map" && attrs.kind === "cluster_bridge") {
+              const [source, targetNode] = graph.extremities(edge);
+              if (source !== this.selectedClusterId && targetNode !== this.selectedClusterId) {
+                reduced.color = this.palette().edgeFaint;
+              }
+            }
+            return reduced;
           },
 
           renderSigma(containerId, graph, target) {
@@ -204,24 +662,59 @@
               return null;
             }
 
+            const state = { zoomRatio: 1, hoverNode: null };
             const renderer = new SigmaCtor(graph, document.getElementById(containerId), {
               renderEdgeLabels: false,
-              labelDensity: 0.1,
-              labelGridCellSize: 120,
-              minCameraRatio: 0.05,
-              maxCameraRatio: 12,
+              labelDensity: 0.18,
+              labelGridCellSize: 90,
+              labelRenderedSizeThreshold: 8,
+              minCameraRatio: 0.03,
+              maxCameraRatio: 16,
               zIndex: true,
+              nodeReducer: (node, attrs) => this.reduceNode(target, node, attrs, state),
+              edgeReducer: (edge, attrs) => this.reduceEdge(target, edge, attrs, state, graph),
             });
+
+            const refreshState = () => {
+              state.zoomRatio = renderer.getCamera().getState().ratio;
+              renderer.refresh();
+            };
+
+            renderer.on("enterNode", ({ node }) => {
+              state.hoverNode = node;
+              renderer.refresh();
+            });
+            renderer.on("leaveNode", () => {
+              state.hoverNode = null;
+              renderer.refresh();
+            });
+
+            renderer.getCamera().on("updated", refreshState);
+            refreshState();
 
             if (target === "map") {
               this.mapSigma = renderer;
+              this.mapGraph = graph;
               renderer.on("clickNode", ({ node }) => {
-                if (String(node).startsWith("cluster-")) this.selectCluster(String(node));
+                const attrs = graph.getNodeAttributes(node);
+                if (attrs.kind === "cluster") {
+                  this.selectCluster(String(node));
+                }
               });
             } else {
               this.detailSigma = renderer;
+              this.detailGraph = graph;
             }
             return renderer;
+          },
+
+          refreshRenderers() {
+            if (this.mapGraph) {
+              this.renderSigma("cluster-map", this.mapGraph, "map");
+            }
+            if (this.detailGraph) {
+              this.renderSigma("cluster-detail", this.detailGraph, "detail");
+            }
           },
 
           async fetchJSON(path) {
@@ -235,7 +728,11 @@
             try {
               await this.reloadQueue();
               await this.reloadMap();
-              if (this.selectedClusterId) await this.reloadDetail();
+              if (this.selectedClusterId) {
+                await this.reloadDetail();
+              } else {
+                this.detailStats = "no cluster selected";
+              }
               this.statusLine = "ready";
             } catch (err) {
               this.statusLine = String(err);
@@ -249,10 +746,8 @@
               limit: String(this.maxClusters),
             });
             const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters?${params.toString()}`);
-            this.clusters = payload.clusters || [];
-            if (!this.selectedClusterId || !this.clusters.find((row) => row.cluster_id === this.selectedClusterId)) {
-              this.selectedClusterId = this.clusters.length ? this.clusters[0].cluster_id : null;
-            }
+            this.allClusters = payload.clusters || [];
+            this.applyQueueFilter();
           },
 
           async reloadMap() {
@@ -260,10 +755,10 @@
               kind: this.kind,
               min_members: String(this.minMembers),
               max_clusters: String(this.maxClusters),
-              max_bridges: "900",
+              max_bridges: String(this.maxBridges),
             });
             const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/graph/cluster-map?${params.toString()}`);
-            this.mapStats = `${payload.node_count} clusters / ${payload.edge_count} bridges`;
+            this.mapStats = `${payload.node_count} clusters / ${payload.edge_count} bridges (${payload.mode})`;
             const graph = this.makeGraph(payload.elements, { mode: "cluster-map" });
             this.renderSigma("cluster-map", graph, "map");
           },
@@ -279,7 +774,8 @@
             });
             const payload = await this.fetchJSON(`/api/repos/${encodeURIComponent(this.repo)}/clusters/${encodeURIComponent(this.selectedClusterId)}/detail?${params.toString()}`);
             const c = payload.cluster || {};
-            this.detailStats = `${payload.node_count} nodes / ${payload.edge_count} edges — ${c.cluster_type || ""}`;
+            const canonicalSummary = [c.canonical_pr, c.canonical_issue].filter(Boolean).join(" / ");
+            this.detailStats = `${payload.node_count} nodes / ${payload.edge_count} edges — ${c.cluster_type || ""}${canonicalSummary ? ` — ${canonicalSummary}` : ""}`;
             const graph = this.makeGraph(payload.elements, { mode: "cluster-detail" });
             this.renderSigma("cluster-detail", graph, "detail");
           },
@@ -287,6 +783,8 @@
           async selectCluster(clusterId) {
             if (!clusterId) return;
             this.selectedClusterId = clusterId;
+            this.syncSelectedMeta();
+            if (this.mapSigma) this.mapSigma.refresh();
             await this.reloadDetail();
           },
         };
