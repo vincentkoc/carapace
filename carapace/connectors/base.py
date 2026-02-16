@@ -41,6 +41,7 @@ class SourceConnector(Protocol):
         entity: SourceEntity,
         include_comments: bool = False,
         mode: str = "minimal",
+        include_simple_scores: bool = False,
     ) -> SourceEntity: ...
 
     def get_diff_or_change_set(self, entity_id: str) -> dict: ...

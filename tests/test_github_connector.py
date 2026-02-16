@@ -182,6 +182,64 @@ def test_enrich_entity_minimal_uses_files_fast_path() -> None:
     assert ("_api_json", "pulls/1") not in fast_client.calls
 
 
+def test_enrich_entity_minimal_can_include_simple_scores() -> None:
+    class SimpleScoreClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_page(self, endpoint: str, *, page: int, per_page: int = 100):
+            _ = (page, per_page)
+            self.calls.append(("get_page", endpoint))
+            if endpoint == "pulls/1/files":
+                return [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-old\n+new"}]
+            if endpoint == "pulls/1/commits":
+                return [{"sha": "abc123", "commit": {"message": "fix: sample"}}]
+            return []
+
+        def _api_json(self, endpoint: str, method: str = "GET", body=None):
+            _ = (method, body)
+            self.calls.append(("_api_json", endpoint))
+            if endpoint == "pulls/1":
+                return {"mergeable": True, "mergeable_state": "clean", "head": {"sha": "abc123"}}
+            if endpoint == "commits/abc123/status":
+                return {
+                    "state": "success",
+                    "statuses": [
+                        {
+                            "context": "greptile review",
+                            "description": "score: 0.81",
+                        }
+                    ],
+                }
+            return {}
+
+    connector = GithubGhSourceConnector(repo="openclaw/openclaw")
+    score_client = SimpleScoreClient()
+    connector.client = score_client  # type: ignore[assignment]
+
+    pr_entity = SourceEntity.model_validate(
+        {
+            "id": "pr:1",
+            "repo": "openclaw/openclaw",
+            "kind": "pr",
+            "number": 1,
+            "state": "open",
+            "title": "t",
+            "author": "alice",
+            "changed_files": [],
+        }
+    )
+    enriched = connector.enrich_entity(pr_entity, mode="minimal", include_simple_scores=True)
+    assert enriched.mergeable is True
+    assert enriched.mergeable_state == "clean"
+    assert enriched.ci_status == CIStatus.PASS
+    assert enriched.external_reviews
+    assert enriched.external_reviews[0].provider == "greptile"
+    assert enriched.external_reviews[0].overall_score == 0.81
+    assert ("_api_json", "pulls/1") in score_client.calls
+    assert ("_api_json", "commits/abc123/status") in score_client.calls
+
+
 class FakeSinkClient:
     def __init__(self) -> None:
         self.calls = []

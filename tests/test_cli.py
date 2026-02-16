@@ -340,8 +340,14 @@ storage:
         def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
             _ = (repo, gh_bin, kwargs)
 
-        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
-            _ = (include_comments, mode)
+        def enrich_entity(
+            self,
+            entity: SourceEntity,
+            include_comments: bool = False,
+            mode: str = "minimal",
+            include_simple_scores: bool = False,
+        ) -> SourceEntity:
+            _ = (include_comments, mode, include_simple_scores)
             raise RuntimeError("boom")
 
     monkeypatch.setattr(cli, "GithubGhSourceConnector", FailingSource)
@@ -428,8 +434,14 @@ storage:
         def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
             _ = (repo, gh_bin, kwargs)
 
-        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
-            _ = (include_comments, mode)
+        def enrich_entity(
+            self,
+            entity: SourceEntity,
+            include_comments: bool = False,
+            mode: str = "minimal",
+            include_simple_scores: bool = False,
+        ) -> SourceEntity:
+            _ = (include_comments, mode, include_simple_scores)
             raise GithubRateLimitError(
                 "API rate limit exceeded",
                 reset_at=datetime(2026, 2, 16, 1, 0, tzinfo=UTC),
@@ -609,8 +621,14 @@ storage:
         def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
             _ = (repo, gh_bin, kwargs)
 
-        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
-            _ = (include_comments, mode)
+        def enrich_entity(
+            self,
+            entity: SourceEntity,
+            include_comments: bool = False,
+            mode: str = "minimal",
+            include_simple_scores: bool = False,
+        ) -> SourceEntity:
+            _ = (include_comments, mode, include_simple_scores)
             return entity.model_copy(update={"changed_files": ["src/a.py"]})
 
     monkeypatch.setattr(cli, "GithubGhSourceConnector", FakeSource)

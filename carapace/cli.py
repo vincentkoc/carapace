@@ -177,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="When enriching, also fetch issue comments (slower; needed for external review signal extraction)",
     )
     process.add_argument(
+        "--enrich-simple-scores",
+        action="store_true",
+        help="When enriching in minimal mode, also fetch mergeable/check-status review signals (extra API calls)",
+    )
+    process.add_argument(
         "--enrich-mode",
         choices=["minimal", "full"],
         default="minimal",
@@ -231,6 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--enrich-comments",
         action="store_true",
         help="When enriching in full mode, also fetch issue comments",
+    )
+    enrich.add_argument(
+        "--enrich-simple-scores",
+        action="store_true",
+        help="When enriching in minimal mode, also fetch mergeable/check-status review signals (extra API calls)",
     )
     enrich.add_argument(
         "--enrich-mode",
@@ -444,6 +454,7 @@ def _enrich_entities_if_needed(
                 entity_obj,
                 include_comments=args.enrich_comments,
                 mode=args.enrich_mode,
+                include_simple_scores=args.enrich_simple_scores,
             )
             return entity_index, enriched_entity, True, None
         except GithubRateLimitError as exc:

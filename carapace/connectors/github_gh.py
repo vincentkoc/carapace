@@ -387,6 +387,7 @@ class GithubGhSourceConnector(SourceConnector):
         entity: SourceEntity,
         include_comments: bool = False,
         mode: str = "minimal",
+        include_simple_scores: bool = False,
     ) -> SourceEntity:
         if entity.kind != EntityKind.PR or entity.number is None:
             return entity
@@ -398,14 +399,33 @@ class GithubGhSourceConnector(SourceConnector):
             diff_hunks = _parse_diff_hunks(files)
             commits_payload = self.client.get_page(f"pulls/{entity.number}/commits", page=1, per_page=100)
             commits, patch_ids = _extract_lineage(commits_payload)
-            return entity.model_copy(
-                update={
-                    "changed_files": changed_files,
-                    "diff_hunks": diff_hunks,
-                    "commits": commits,
-                    "patch_ids": patch_ids,
-                }
-            )
+            update = {
+                "changed_files": changed_files,
+                "diff_hunks": diff_hunks,
+                "commits": commits,
+                "patch_ids": patch_ids,
+            }
+            if include_simple_scores:
+                pull_payload = self.client._api_json(f"pulls/{entity.number}") or {}
+                mergeable = pull_payload.get("mergeable")
+                mergeable_state = pull_payload.get("mergeable_state")
+                head_sha = (pull_payload.get("head") or {}).get("sha")
+                ci_status = entity.ci_status
+                status_payload: dict[str, Any] = {}
+                if head_sha:
+                    status_payload = self.client._api_json(f"commits/{head_sha}/status") or {}
+                    ci_status = _normalize_ci_status(status_payload.get("state"))
+                status_signals = _extract_external_review_signals_from_status(status_payload)
+                external_reviews = _merge_external_review_signals(entity.external_reviews, status_signals)
+                update.update(
+                    {
+                        "mergeable": mergeable,
+                        "mergeable_state": mergeable_state,
+                        "ci_status": ci_status,
+                        "external_reviews": external_reviews,
+                    }
+                )
+            return entity.model_copy(update=update)
 
         payload = self.client._api_json(f"pulls/{entity.number}")
         pull = GithubPull.model_validate(payload)
@@ -462,6 +482,7 @@ class GithubGhSourceConnector(SourceConnector):
         comments: list[GithubComment] = []
         head_sha = pull.head.get("sha")
         ci_status = CIStatus.UNKNOWN
+        status_payload: dict[str, Any] = {}
 
         if enrich_files:
             if file_pages_limit is not None and file_pages_limit <= 1:
@@ -501,7 +522,10 @@ class GithubGhSourceConnector(SourceConnector):
                 soft_linked_issues,
                 _extract_soft_links_from_comments(comments, linked_issues),
             )
-        external_reviews = _extract_external_review_signals(comments)
+        external_reviews = _merge_external_review_signals(
+            _extract_external_review_signals(comments),
+            _extract_external_review_signals_from_status(status_payload),
+        )
 
         return SourceEntity(
             id=f"pr:{number}",
@@ -750,6 +774,58 @@ def _extract_external_review_signals(comments: list[GithubComment]) -> list[Exte
         )
 
     return signals
+
+
+def _extract_external_review_signals_from_status(status_payload: dict[str, Any]) -> list[ExternalReviewSignal]:
+    signals: list[ExternalReviewSignal] = []
+    statuses = status_payload.get("statuses") if isinstance(status_payload, dict) else None
+    if not isinstance(statuses, list):
+        return signals
+
+    for status in statuses:
+        if not isinstance(status, dict):
+            continue
+        context = (status.get("context") or "").strip()
+        description = (status.get("description") or "").strip()
+        haystack = f"{context} {description}".lower()
+        provider = None
+        if "coderabbit" in haystack:
+            provider = "coderabbit"
+        elif "greptile" in haystack:
+            provider = "greptile"
+        if provider is None:
+            continue
+
+        signal_text = f"{context}\n{description}".strip()
+        score = _extract_score_from_text(signal_text)
+        signals.append(
+            ExternalReviewSignal(
+                provider=provider,
+                overall_score=score,
+                confidence=0.55,
+                summary=signal_text[:600],
+            )
+        )
+    return signals
+
+
+def _merge_external_review_signals(first: list[ExternalReviewSignal], second: list[ExternalReviewSignal]) -> list[ExternalReviewSignal]:
+    merged: dict[str, ExternalReviewSignal] = {}
+    for signal in [*first, *second]:
+        key = signal.provider.lower()
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = signal
+            continue
+        # Keep highest score and confidence while preserving latest summary context.
+        merged[key] = ExternalReviewSignal(
+            provider=existing.provider,
+            overall_score=max(existing.overall_score, signal.overall_score),
+            confidence=max(existing.confidence, signal.confidence),
+            summary=signal.summary or existing.summary,
+            risk={**existing.risk, **signal.risk},
+        )
+    return list(merged.values())
 
 
 def _extract_soft_links_from_comments(comments: list[GithubComment], hard_links: list[str] | None = None) -> list[str]:
