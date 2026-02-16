@@ -14,7 +14,7 @@ import yaml
 
 from carapace.actioning import apply_routing_decisions
 from carapace.config import CarapaceConfig, load_effective_config
-from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector
+from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector, GithubRateLimitError
 from carapace.loader import ingest_github_to_sqlite
 from carapace.logging_utils import configure_logging
 from carapace.models import SourceEntity
@@ -376,8 +376,11 @@ def _enrich_entities_if_needed(
 
     enriched_updates: list[SourceEntity] = []
     state_updates: list[SourceEntity] = []
+    rate_limited = False
+    rate_limit_reset_at: datetime | None = None
+    rate_limit_error_count = 0
 
-    def _enrich_one(target: tuple[int, SourceEntity]) -> tuple[int, SourceEntity, bool]:
+    def _enrich_one(target: tuple[int, SourceEntity]) -> tuple[int, SourceEntity, bool, datetime | None]:
         entity_index, entity_obj = target
         try:
             enriched_entity = connector.enrich_entity(
@@ -385,14 +388,16 @@ def _enrich_entities_if_needed(
                 include_comments=args.enrich_comments,
                 mode=args.enrich_mode,
             )
-            return entity_index, enriched_entity, True
+            return entity_index, enriched_entity, True, None
+        except GithubRateLimitError as exc:
+            return entity_index, entity_obj, False, exc.reset_at
         except Exception as exc:  # pragma: no cover - network/runtime dependent
             message = str(exc)
             if "404" in message and entity_obj.kind.value == "pr":
                 logger.debug("PR %s resolved as closed during enrichment", entity_obj.id)
-                return entity_index, entity_obj.model_copy(update={"state": "closed"}), False
+                return entity_index, entity_obj.model_copy(update={"state": "closed"}), False, None
             logger.warning("Failed to enrich %s: %s", entity_obj.id, exc)
-            return entity_index, entity_obj, False
+            return entity_index, entity_obj, False, None
 
     completed = 0
     total_targets = len(targets)
@@ -435,20 +440,42 @@ def _enrich_entities_if_needed(
             storage.upsert_ingest_entities(args.repo, list(state_updates), source="ingest")
             state_updates.clear()
 
-    with ThreadPoolExecutor(max_workers=max(1, args.enrich_workers)) as pool:
-        pending = {pool.submit(_enrich_one, target) for target in targets}
+    max_workers = max(1, args.enrich_workers)
+    target_iter = iter(targets)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pending = set()
+
+        def _submit_next() -> bool:
+            try:
+                target = next(target_iter)
+            except StopIteration:
+                return False
+            pending.add(pool.submit(_enrich_one, target))
+            return True
+
+        for _ in range(max_workers):
+            if not _submit_next():
+                break
+
         while pending:
-            done, pending = wait(pending, timeout=heartbeat_seconds, return_when=FIRST_COMPLETED)
+            done, _ = wait(pending, timeout=heartbeat_seconds, return_when=FIRST_COMPLETED)
             if not done:
                 _log_progress(force=True)
                 continue
+            pending.difference_update(done)
             for future in done:
-                entity_index, enriched_entity, enrichment_success = future.result()
+                entity_index, enriched_entity, enrichment_success, limited_until = future.result()
                 original_entity = target_by_index.get(entity_index, entities[entity_index])
                 if enrichment_success:
                     enriched_updates.append(enriched_entity)
                 elif enriched_entity.state != original_entity.state:
                     state_updates.append(enriched_entity)
+                elif limited_until is not None:
+                    rate_limited = True
+                    rate_limit_error_count += 1
+                    if rate_limit_reset_at is None or limited_until > rate_limit_reset_at:
+                        rate_limit_reset_at = limited_until
 
                 entities[entity_index] = enriched_entity
                 completed += 1
@@ -458,8 +485,46 @@ def _enrich_entities_if_needed(
 
                 _log_progress(force=completed == total_targets)
 
+            if rate_limited:
+                # Drop queued futures that haven't started yet, then drain in-flight work.
+                to_cancel = list(pending)
+                cancelled = 0
+                for future in to_cancel:
+                    if future.cancel():
+                        cancelled += 1
+                pending = {future for future in pending if not future.cancelled()}
+                if cancelled:
+                    logger.warning("Cancelled %s queued enrichment tasks due to GitHub rate limiting", cancelled)
+                continue
+
+            while len(pending) < max_workers:
+                if not _submit_next():
+                    break
+
     _flush_updates()
     _log_progress(force=True)
+    if rate_limited:
+        remaining = max(0, total_targets - completed)
+        if rate_limit_reset_at:
+            now = datetime.now(UTC)
+            wait_seconds = max(0, int((rate_limit_reset_at - now).total_seconds()))
+            logger.warning(
+                "GitHub rate limit hit during enrichment: completed=%s/%s remaining=%s reset_at=%s (~%ss). Re-run process-stored/enrich-stored to continue.",
+                completed,
+                total_targets,
+                remaining,
+                rate_limit_reset_at.isoformat(),
+                wait_seconds,
+            )
+        else:
+            logger.warning(
+                "GitHub rate limit hit during enrichment: completed=%s/%s remaining=%s. Re-run process-stored/enrich-stored later to continue.",
+                completed,
+                total_targets,
+                remaining,
+            )
+        if rate_limit_error_count > 1:
+            logger.warning("Encountered %s rate-limit enrichment errors in this run", rate_limit_error_count)
     logger.info("Persisted enriched entity data back to SQLite")
     return entities, completed
 

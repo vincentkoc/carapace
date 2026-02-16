@@ -1,7 +1,9 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from carapace import cli
+from carapace.connectors.github_gh import GithubRateLimitError
 from carapace.models import CIStatus, EntityKind, SourceEntity
 
 
@@ -333,6 +335,98 @@ storage:
 
     watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
     assert watermarks["pr:1"]["enriched_for_updated_at"] is None
+
+
+def test_process_stored_enrich_rate_limit_stops_gracefully(tmp_path: Path, monkeypatch) -> None:
+    from carapace.storage import SQLiteStorage
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    out_dir = tmp_path / "out"
+    db_path = repo_path / ".carapace" / "carapace.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    storage = SQLiteStorage(db_path)
+    storage.upsert_ingest_entities(
+        "acme/repo",
+        [
+            SourceEntity(
+                id="pr:1",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=1,
+                state="open",
+                title="Needs enrich 1",
+                body="",
+                author="alice",
+                changed_files=[],
+                ci_status=CIStatus.UNKNOWN,
+            ),
+            SourceEntity(
+                id="pr:2",
+                repo="acme/repo",
+                kind=EntityKind.PR,
+                number=2,
+                state="open",
+                title="Needs enrich 2",
+                body="",
+                author="bob",
+                changed_files=[],
+                ci_status=CIStatus.UNKNOWN,
+            ),
+        ],
+    )
+
+    (repo_path / ".carapace.yaml").write_text(
+        f"""
+storage:
+  backend: sqlite
+  sqlite_path: {db_path}
+  persist_runs: false
+"""
+    )
+
+    class RateLimitedSource:
+        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+            _ = (repo, gh_bin)
+
+        def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
+            _ = (include_comments, mode)
+            raise GithubRateLimitError(
+                "API rate limit exceeded",
+                reset_at=datetime(2026, 2, 16, 1, 0, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr(cli, "GithubGhSourceConnector", RateLimitedSource)
+
+    exit_code = cli.main(
+        [
+            "process-stored",
+            "--repo",
+            "acme/repo",
+            "--repo-path",
+            str(repo_path),
+            "--output-dir",
+            str(out_dir),
+            "--skip-repo-path-check",
+            "--enrich-missing",
+            "--enrich-mode",
+            "minimal",
+            "--enrich-workers",
+            "1",
+            "--enrich-flush-every",
+            "1",
+            "--enrich-progress-every",
+            "1",
+            "--enrich-heartbeat-seconds",
+            "1",
+        ]
+    )
+    assert exit_code == 0
+
+    watermarks = storage.get_enrichment_watermarks("acme/repo", kind="pr")
+    assert watermarks["pr:1"]["enriched_for_updated_at"] is None
+    assert watermarks["pr:2"]["enriched_for_updated_at"] is None
 
 
 def test_db_audit_command_outputs_summary(tmp_path: Path, capsys) -> None:

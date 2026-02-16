@@ -19,6 +19,7 @@ from carapace.models import CIStatus, DiffHunk, EntityKind, ExternalReviewSignal
 _HARD_ISSUE_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#(\d+)", re.IGNORECASE)
 _SOFT_ISSUE_RE = re.compile(r"#(\d+)")
 _GH_ENTITY_URL_RE = re.compile(r"github\\.com/[^\\s/]+/[^\\s/]+/(?:issues|pull)/(\\d+)", re.IGNORECASE)
+_RATE_LIMIT_RE = re.compile(r"(?:api|secondary) rate limit", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -98,6 +99,12 @@ class GithubPullCommit(BaseModel):
     commit: dict[str, Any] = Field(default_factory=dict)
 
 
+class GithubRateLimitError(RuntimeError):
+    def __init__(self, message: str, *, reset_at: datetime | None = None) -> None:
+        super().__init__(message)
+        self.reset_at = reset_at
+
+
 class GithubGhClient:
     def __init__(self, repo: str, gh_bin: str = "gh") -> None:
         self.repo = repo
@@ -141,12 +148,52 @@ class GithubGhClient:
             proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
 
         if proc.returncode != 0:
-            raise RuntimeError(f"gh api failed: {' '.join(cmd)}\n{proc.stderr.strip()}")
+            stderr = proc.stderr.strip()
+            if _RATE_LIMIT_RE.search(stderr):
+                reset_at = self._get_rate_limit_reset_at()
+                raise GithubRateLimitError(
+                    f"gh api failed: {' '.join(cmd)}\n{stderr}",
+                    reset_at=reset_at,
+                )
+            raise RuntimeError(f"gh api failed: {' '.join(cmd)}\n{stderr}")
 
         output = proc.stdout.strip()
         if not output:
             return None
         return json.loads(output)
+
+    def _get_rate_limit_reset_at(self) -> datetime | None:
+        cmd = [self.gh_bin, "api", "rate_limit", "-X", "GET", "-H", "Accept: application/vnd.github+json"]
+        proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+        if proc.returncode != 0:
+            return None
+        payload = proc.stdout.strip()
+        if not payload:
+            return None
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+
+        reset_epochs: list[int] = []
+        resources = data.get("resources")
+        if isinstance(resources, dict):
+            for resource in resources.values():
+                if not isinstance(resource, dict):
+                    continue
+                remaining = resource.get("remaining")
+                reset = resource.get("reset")
+                if isinstance(remaining, int) and remaining <= 0 and isinstance(reset, int):
+                    reset_epochs.append(reset)
+        rate = data.get("rate")
+        if isinstance(rate, dict):
+            remaining = rate.get("remaining")
+            reset = rate.get("reset")
+            if isinstance(remaining, int) and remaining <= 0 and isinstance(reset, int):
+                reset_epochs.append(reset)
+        if not reset_epochs:
+            return None
+        return datetime.fromtimestamp(max(reset_epochs), UTC)
 
 
 class GithubGhSourceConnector(SourceConnector):

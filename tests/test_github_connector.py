@@ -1,4 +1,9 @@
-from carapace.connectors.github_gh import GithubGhSinkConnector, GithubGhSourceConnector, _extract_score_from_text
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+
+from carapace.connectors.github_gh import GithubGhClient, GithubGhSinkConnector, GithubGhSourceConnector, GithubRateLimitError, _extract_score_from_text
 from carapace.models import CIStatus, EntityKind, SourceEntity
 
 
@@ -204,3 +209,52 @@ def test_github_sink_live_calls_api() -> None:
     assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) in fake_client.calls
     assert ("issues/12/comments", "POST", {"body": "hello"}) in fake_client.calls
     assert ("issues/12", "PATCH", {"state": "closed"}) in fake_client.calls
+
+
+def test_github_client_raises_rate_limit_error_with_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+
+    def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="gh: API rate limit exceeded for user ID 1 (HTTP 403)",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"resources":{"core":{"remaining":0,"reset":1700000000}}}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    client = GithubGhClient(repo="openclaw/openclaw")
+    with pytest.raises(GithubRateLimitError) as exc:
+        client._api_json("pulls?state=open")
+    assert isinstance(exc.value.reset_at, datetime)
+    assert exc.value.reset_at == datetime.fromtimestamp(1700000000, UTC)
+
+
+def test_github_client_rate_limit_reset_fallback_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+
+    def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="gh: secondary rate limit. please wait",
+            )
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="failed",
+        )
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    client = GithubGhClient(repo="openclaw/openclaw")
+    with pytest.raises(GithubRateLimitError) as exc:
+        client._api_json("pulls?state=open")
+    assert exc.value.reset_at is None
