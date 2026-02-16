@@ -113,6 +113,9 @@ def build_clusters(
         weak_neighbors[edge.entity_b].add(edge.entity_a)
 
     for edge in weak_edges:
+        if edge.breakdown.hard_link_overlap >= 0.5 or edge.breakdown.lineage >= 0.5:
+            uf.union(edge.entity_a, edge.entity_b)
+            continue
         common = strong_neighbors[edge.entity_a] & strong_neighbors[edge.entity_b]
         if common:
             uf.union(edge.entity_a, edge.entity_b)

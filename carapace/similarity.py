@@ -219,6 +219,7 @@ def retrieve_candidates(
     total_entities: int | None = None,
 ) -> list[str]:
     candidate_votes: dict[str, int] = defaultdict(int)
+    mandatory_candidates: set[str] = set()
 
     def bump(values: set[str]) -> None:
         for candidate in values:
@@ -230,7 +231,9 @@ def retrieve_candidates(
         if len(bucket) <= cfg.max_module_bucket_size:
             bump(bucket)
     for issue in fp.linked_issues:
-        bump(idx.by_issue.get(issue, set()))
+        linked = idx.by_issue.get(issue, set())
+        bump(linked)
+        mandatory_candidates.update(candidate for candidate in linked if candidate != entity_id)
     for issue in fp.soft_linked_issues:
         bump(idx.by_soft_issue.get(issue, set()))
     for path in fp.changed_files:
@@ -256,12 +259,23 @@ def retrieve_candidates(
     vote_floor = cfg.min_candidate_votes
     if total_entities is not None and total_entities >= cfg.large_run_threshold:
         vote_floor = max(vote_floor, cfg.min_candidate_votes_large)
+    if fp.linked_issues:
+        # Preserve recall for explicitly linked work items even on large runs.
+        vote_floor = min(vote_floor, 1)
 
     ranked = sorted(
         ((candidate, votes) for candidate, votes in candidate_votes.items() if votes >= vote_floor),
         key=lambda item: (-item[1], item[0]),
     )
-    return [candidate for candidate, _ in ranked[: cfg.top_k_candidates]]
+    ranked_candidates = [candidate for candidate, _ in ranked]
+    if not mandatory_candidates:
+        return ranked_candidates[: cfg.top_k_candidates]
+
+    mandatory_sorted = sorted(candidate for candidate in mandatory_candidates if candidate in candidate_votes)
+    result = list(mandatory_sorted)
+    remaining = [candidate for candidate in ranked_candidates if candidate not in mandatory_candidates]
+    result.extend(remaining[: cfg.top_k_candidates])
+    return result
 
 
 def _advanced_scores(
@@ -308,7 +322,7 @@ def score_pair(
 
     file_overlap = _jaccard(file_a, file_b)
     hunk_overlap = _jaccard(hunk_a, hunk_b)
-    hard_link_overlap = _jaccard(hard_issue_a, hard_issue_b)
+    hard_link_overlap = max(_jaccard(hard_issue_a, hard_issue_b), _overlap_min(hard_issue_a, hard_issue_b))
     soft_link_overlap = _jaccard(soft_issue_a, soft_issue_b)
     lineage = max(_jaccard(patch_a, patch_b), _overlap_min(patch_a, patch_b))
     structure = 0.7 * hunk_overlap + 0.3 * file_overlap

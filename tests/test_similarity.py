@@ -77,6 +77,57 @@ def test_candidate_retrieval_skips_hot_module_buckets() -> None:
     assert candidates == []
 
 
+def test_large_run_still_keeps_hard_issue_link_candidates() -> None:
+    cfg = SimilarityConfig(min_candidate_votes=1, min_candidate_votes_large=2, large_run_threshold=3)
+    fps = {
+        "a": _fp("a", files=[], modules=[], issues=["123"], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "b": _fp("b", files=[], modules=[], issues=["123"], patch_ids=[], hunks=[], embedding=[1, 0]),
+        "c": _fp("c", files=[], modules=[], issues=[], patch_ids=[], hunks=[], embedding=[0, 1]),
+    }
+    idx = build_candidate_index(fps, cfg)
+    candidates = retrieve_candidates("a", fps["a"], idx, cfg, total_entities=3)
+    assert "b" in candidates
+
+
+def test_hard_issue_link_candidates_are_kept_even_when_top_k_is_small() -> None:
+    cfg = SimilarityConfig(top_k_candidates=1)
+    fps = {
+        "a": _fp(
+            "a",
+            files=[],
+            modules=[],
+            issues=["123"],
+            patch_ids=[],
+            hunks=[],
+            embedding=[1, 0],
+            tokens=["alpha", "beta", "gamma", "delta"],
+        ),
+        "b": _fp(
+            "b",
+            files=[],
+            modules=[],
+            issues=["123"],
+            patch_ids=[],
+            hunks=[],
+            embedding=[1, 0],
+            tokens=["alpha", "beta", "gamma", "delta"],
+        ),
+        "c": _fp(
+            "c",
+            files=[],
+            modules=[],
+            issues=[],
+            patch_ids=[],
+            hunks=[],
+            embedding=[1, 0],
+            tokens=["alpha", "beta", "gamma", "delta"],
+        ),
+    }
+    idx = build_candidate_index(fps, cfg)
+    candidates = retrieve_candidates("a", fps["a"], idx, cfg, total_entities=3)
+    assert "b" in candidates
+
+
 def test_score_pair_prefers_lineage_and_penalizes_size() -> None:
     cfg = SimilarityConfig()
     a = _fp(
@@ -150,6 +201,31 @@ def test_compute_similarity_edges_creates_single_strong_edge() -> None:
     edge = edges[0]
     assert {edge.entity_a, edge.entity_b} == {"a", "b"}
     assert edge.tier.value == "strong"
+
+
+def test_hard_issue_overlap_uses_subset_overlap_not_only_jaccard() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=False)
+    a = _fp(
+        "pr:1",
+        files=[],
+        modules=[],
+        issues=["123", "999"],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+    )
+    b = _fp(
+        "pr:2",
+        files=[],
+        modules=[],
+        issues=["123"],
+        patch_ids=[],
+        hunks=[],
+        embedding=[1.0, 0.0],
+    )
+    total, breakdown = score_pair(a, b, cfg, idx=None)
+    assert breakdown.hard_link_overlap == 1.0
+    assert total >= 0.0
 
 
 def test_advanced_algorithms_retrieve_without_file_or_issue_overlap() -> None:

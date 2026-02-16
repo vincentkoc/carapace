@@ -94,3 +94,14 @@ def test_tail_pruning_keeps_leaf_with_hard_link_signal() -> None:
     )
     assert len(clusters) == 1
     assert set(clusters[0].members) == {"a", "b", "c"}
+
+
+def test_weak_edge_with_hard_link_merges_directly() -> None:
+    clusters = build_clusters(
+        ["a", "b"],
+        [
+            _edge("a", "b", EdgeTier.WEAK, score=0.1, hard_link=1.0),
+        ],
+    )
+    assert len(clusters) == 1
+    assert set(clusters[0].members) == {"a", "b"}

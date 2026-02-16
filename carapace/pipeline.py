@@ -209,6 +209,24 @@ class CarapaceEngine:
                 len(fingerprints),
                 fp_elapsed,
             )
+
+            pr_ids = [entity.id for entity in active_entities if entity.kind.value == "pr"]
+            prs_without_structure = 0
+            for entity_id in pr_ids:
+                fp = fingerprints.get(entity_id)
+                if fp is None:
+                    continue
+                if not fp.changed_files and not fp.hunk_signatures:
+                    prs_without_structure += 1
+            if pr_ids:
+                missing_ratio = prs_without_structure / len(pr_ids)
+                if missing_ratio >= 0.8:
+                    logger.warning(
+                        "PR structure coverage is low: %s/%s PRs missing changed_files+hunks (%.1f%%). Run with --enrich-missing for stronger clustering.",
+                        prs_without_structure,
+                        len(pr_ids),
+                        missing_ratio * 100,
+                    )
         self.last_fingerprints = fingerprints
 
         sim_start = time.perf_counter()
