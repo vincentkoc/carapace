@@ -49,8 +49,8 @@ def test_scan_github_command_uses_connector_and_can_save_input(tmp_path: Path, m
     repo_path.mkdir()
 
     class FakeSource:
-        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
-            _ = (repo, gh_bin)
+        def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
+            _ = (repo, gh_bin, kwargs)
 
         def fetch_open_entities(
             self,
@@ -112,8 +112,8 @@ def test_ingest_github_command_invokes_loader(tmp_path: Path, monkeypatch) -> No
     repo_path.mkdir()
 
     class FakeSource:
-        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
-            _ = (repo, gh_bin)
+        def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
+            _ = (repo, gh_bin, kwargs)
 
     class FakeResult:
         repo = "acme/repo"
@@ -299,8 +299,8 @@ storage:
     )
 
     class FailingSource:
-        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
-            _ = (repo, gh_bin)
+        def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
+            _ = (repo, gh_bin, kwargs)
 
         def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
             _ = (include_comments, mode)
@@ -387,8 +387,8 @@ storage:
     )
 
     class RateLimitedSource:
-        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
-            _ = (repo, gh_bin)
+        def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
+            _ = (repo, gh_bin, kwargs)
 
         def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
             _ = (include_comments, mode)
@@ -568,8 +568,8 @@ storage:
     )
 
     class FakeSource:
-        def __init__(self, repo: str, gh_bin: str = "gh") -> None:
-            _ = (repo, gh_bin)
+        def __init__(self, repo: str, gh_bin: str = "gh", **kwargs: object) -> None:
+            _ = (repo, gh_bin, kwargs)
 
         def enrich_entity(self, entity: SourceEntity, include_comments: bool = False, mode: str = "minimal") -> SourceEntity:
             _ = (include_comments, mode)

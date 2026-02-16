@@ -72,6 +72,27 @@ def _add_repo_validation_flags(cmd: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_github_rate_limit_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument(
+        "--gh-rate-limit-retries",
+        type=int,
+        default=2,
+        help="Retries per GitHub API call when rate-limited",
+    )
+    cmd.add_argument(
+        "--gh-secondary-backoff-seconds",
+        type=float,
+        default=5.0,
+        help="Base backoff for secondary limits (exponential per retry)",
+    )
+    cmd.add_argument(
+        "--gh-rate-limit-max-sleep-seconds",
+        type=float,
+        default=90.0,
+        help="Maximum automatic sleep before surfacing a rate-limit failure",
+    )
+
+
 def _validate_repo_path_if_needed(args: argparse.Namespace) -> None:
     if getattr(args, "skip_repo_path_check", False):
         return
@@ -94,6 +115,9 @@ def _maybe_apply_routing(args: argparse.Namespace, entities: list[SourceEntity],
     sink = GithubGhSinkConnector(
         repo=args.repo,
         gh_bin=args.gh_bin,
+        rate_limit_retries=args.gh_rate_limit_retries,
+        secondary_backoff_base_seconds=args.gh_secondary_backoff_seconds,
+        rate_limit_max_sleep_seconds=args.gh_rate_limit_max_sleep_seconds,
         entity_number_resolver=lambda entity_id: id_to_number[entity_id],
         dry_run=not args.live_actions,
     )
@@ -118,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--max-issues", type=int, default=0, help="Max issues to ingest (0 = no explicit cap)")
     _add_common_config_flags(ingest)
     _add_repo_validation_flags(ingest)
+    _add_github_rate_limit_flags(ingest)
 
     process = sub.add_parser("process-stored", help="Process previously ingested entities from SQLite")
     process.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
@@ -179,6 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_config_flags(process)
     _add_repo_validation_flags(process)
+    _add_github_rate_limit_flags(process)
 
     enrich = sub.add_parser("enrich-stored", help="Enrich stored PR details in SQLite without running scan")
     enrich.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
@@ -227,6 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_config_flags(enrich)
     _add_repo_validation_flags(enrich)
+    _add_github_rate_limit_flags(enrich)
 
     audit = sub.add_parser("db-audit", help="Show ingest DB audit and integrity summary for a repo")
     audit.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
@@ -259,6 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_config_flags(scan_github)
     _add_repo_validation_flags(scan_github)
+    _add_github_rate_limit_flags(scan_github)
 
     return parser
 
@@ -280,7 +308,13 @@ def _run_ingest_github(args: argparse.Namespace) -> int:
         raise ValueError("ingest-github currently requires storage.backend=sqlite")
 
     storage = SQLiteStorage(config.storage.sqlite_path)
-    connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
+    connector = GithubGhSourceConnector(
+        repo=args.repo,
+        gh_bin=args.gh_bin,
+        rate_limit_retries=args.gh_rate_limit_retries,
+        secondary_backoff_base_seconds=args.gh_secondary_backoff_seconds,
+        rate_limit_max_sleep_seconds=args.gh_rate_limit_max_sleep_seconds,
+    )
 
     result = ingest_github_to_sqlite(
         connector,
@@ -333,7 +367,13 @@ def _enrich_entities_if_needed(
     storage: SQLiteStorage,
     entities: list[SourceEntity],
 ) -> tuple[list[SourceEntity], int]:
-    connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
+    connector = GithubGhSourceConnector(
+        repo=args.repo,
+        gh_bin=args.gh_bin,
+        rate_limit_retries=args.gh_rate_limit_retries,
+        secondary_backoff_base_seconds=args.gh_secondary_backoff_seconds,
+        rate_limit_max_sleep_seconds=args.gh_rate_limit_max_sleep_seconds,
+    )
     watermarks = storage.get_enrichment_watermarks(args.repo, kind="pr")
     targets: list[tuple[int, SourceEntity]] = []
     skipped_recent = 0
@@ -640,7 +680,13 @@ def _run_scan_github(args: argparse.Namespace) -> int:
     _validate_repo_path_if_needed(args)
     config = _load_config(args)
 
-    connector = GithubGhSourceConnector(repo=args.repo, gh_bin=args.gh_bin)
+    connector = GithubGhSourceConnector(
+        repo=args.repo,
+        gh_bin=args.gh_bin,
+        rate_limit_retries=args.gh_rate_limit_retries,
+        secondary_backoff_base_seconds=args.gh_secondary_backoff_seconds,
+        rate_limit_max_sleep_seconds=args.gh_rate_limit_max_sleep_seconds,
+    )
     include_issues = config.ingest.include_issues if args.include_issues is None else args.include_issues
     entities = connector.fetch_open_entities(
         max_prs=args.max_prs,

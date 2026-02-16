@@ -7,6 +7,8 @@ import json
 import logging
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -100,15 +102,35 @@ class GithubPullCommit(BaseModel):
 
 
 class GithubRateLimitError(RuntimeError):
-    def __init__(self, message: str, *, reset_at: datetime | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reset_at: datetime | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.reset_at = reset_at
+        self.retry_after_seconds = retry_after_seconds
 
 
 class GithubGhClient:
-    def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+    def __init__(
+        self,
+        repo: str,
+        gh_bin: str = "gh",
+        *,
+        rate_limit_retries: int = 2,
+        secondary_backoff_base_seconds: float = 5.0,
+        rate_limit_max_sleep_seconds: float = 90.0,
+    ) -> None:
         self.repo = repo
         self.gh_bin = gh_bin
+        self.rate_limit_retries = max(0, rate_limit_retries)
+        self.secondary_backoff_base_seconds = max(1.0, secondary_backoff_base_seconds)
+        self.rate_limit_max_sleep_seconds = max(1.0, rate_limit_max_sleep_seconds)
+        self._rate_limit_lock = threading.Lock()
+        self._global_backoff_until = 0.0
 
     def get_paginated(self, endpoint: str, per_page: int = 100, max_items: int | None = None) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -135,32 +157,75 @@ class GithubGhClient:
         cmd = [self.gh_bin, "api", f"repos/{self.repo}/{endpoint.lstrip('/')}" if not endpoint.startswith("repos/") else endpoint]
         cmd.extend(["-X", method])
         cmd.extend(["-H", "Accept: application/vnd.github+json"])
-        if body is not None:
-            cmd.extend(["--input", "-"])
-            proc = subprocess.run(
-                cmd,
-                input=json.dumps(body),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        else:
-            proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
-
-        if proc.returncode != 0:
-            stderr = proc.stderr.strip()
-            if _RATE_LIMIT_RE.search(stderr):
-                reset_at = self._get_rate_limit_reset_at()
-                raise GithubRateLimitError(
-                    f"gh api failed: {' '.join(cmd)}\n{stderr}",
-                    reset_at=reset_at,
+        for attempt in range(self.rate_limit_retries + 1):
+            self._wait_for_global_backoff()
+            if body is not None:
+                cmd_with_body = [*cmd, "--input", "-"]
+                proc = subprocess.run(
+                    cmd_with_body,
+                    input=json.dumps(body),
+                    text=True,
+                    capture_output=True,
+                    check=False,
                 )
-            raise RuntimeError(f"gh api failed: {' '.join(cmd)}\n{stderr}")
+            else:
+                proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
 
-        output = proc.stdout.strip()
-        if not output:
-            return None
-        return json.loads(output)
+            if proc.returncode == 0:
+                output = proc.stdout.strip()
+                if not output:
+                    return None
+                return json.loads(output)
+
+            stderr = proc.stderr.strip()
+            if not _RATE_LIMIT_RE.search(stderr):
+                raise RuntimeError(f"gh api failed: {' '.join(cmd)}\n{stderr}")
+
+            reset_at = self._get_rate_limit_reset_at()
+            retry_after_seconds = self._compute_rate_limit_wait_seconds(reset_at=reset_at, attempt=attempt)
+            self._set_global_backoff(retry_after_seconds)
+            has_retry = attempt < self.rate_limit_retries
+
+            logger.warning(
+                "GitHub rate limit hit for %s (attempt %s/%s). backoff=%.1fs reset_at=%s",
+                endpoint,
+                attempt + 1,
+                self.rate_limit_retries + 1,
+                retry_after_seconds,
+                reset_at.isoformat() if reset_at else "unknown",
+            )
+
+            if has_retry and retry_after_seconds <= self.rate_limit_max_sleep_seconds:
+                continue
+
+            raise GithubRateLimitError(
+                f"gh api failed: {' '.join(cmd)}\n{stderr}",
+                reset_at=reset_at,
+                retry_after_seconds=retry_after_seconds,
+            )
+        raise RuntimeError(f"gh api failed unexpectedly after retries for endpoint={endpoint}")
+
+    def _wait_for_global_backoff(self) -> None:
+        while True:
+            with self._rate_limit_lock:
+                wait_seconds = self._global_backoff_until - time.monotonic()
+            if wait_seconds <= 0:
+                return
+            time.sleep(wait_seconds)
+
+    def _set_global_backoff(self, wait_seconds: float) -> None:
+        target = time.monotonic() + max(0.0, wait_seconds)
+        with self._rate_limit_lock:
+            self._global_backoff_until = max(self._global_backoff_until, target)
+
+    def _compute_rate_limit_wait_seconds(self, *, reset_at: datetime | None, attempt: int) -> float:
+        if reset_at is not None:
+            until_reset = (reset_at - datetime.now(UTC)).total_seconds()
+            if until_reset > self.rate_limit_max_sleep_seconds:
+                return until_reset
+            return max(1.0, until_reset + 1.0)
+        backoff = self.secondary_backoff_base_seconds * (2**attempt)
+        return float(min(self.rate_limit_max_sleep_seconds, max(1.0, backoff)))
 
     def _get_rate_limit_reset_at(self) -> datetime | None:
         cmd = [self.gh_bin, "api", "rate_limit", "-X", "GET", "-H", "Accept: application/vnd.github+json"]
@@ -197,9 +262,23 @@ class GithubGhClient:
 
 
 class GithubGhSourceConnector(SourceConnector):
-    def __init__(self, repo: str, gh_bin: str = "gh") -> None:
+    def __init__(
+        self,
+        repo: str,
+        gh_bin: str = "gh",
+        *,
+        rate_limit_retries: int = 2,
+        secondary_backoff_base_seconds: float = 5.0,
+        rate_limit_max_sleep_seconds: float = 90.0,
+    ) -> None:
         self.repo = repo
-        self.client = GithubGhClient(repo=repo, gh_bin=gh_bin)
+        self.client = GithubGhClient(
+            repo=repo,
+            gh_bin=gh_bin,
+            rate_limit_retries=rate_limit_retries,
+            secondary_backoff_base_seconds=secondary_backoff_base_seconds,
+            rate_limit_max_sleep_seconds=rate_limit_max_sleep_seconds,
+        )
 
     def fetch_open_entities(
         self,
@@ -496,9 +575,19 @@ class GithubGhSinkConnector(SinkConnector):
         entity_number_resolver: Callable[[str], int],
         gh_bin: str = "gh",
         dry_run: bool = True,
+        *,
+        rate_limit_retries: int = 2,
+        secondary_backoff_base_seconds: float = 5.0,
+        rate_limit_max_sleep_seconds: float = 90.0,
     ) -> None:
         self.repo = repo
-        self.client = GithubGhClient(repo=repo, gh_bin=gh_bin)
+        self.client = GithubGhClient(
+            repo=repo,
+            gh_bin=gh_bin,
+            rate_limit_retries=rate_limit_retries,
+            secondary_backoff_base_seconds=secondary_backoff_base_seconds,
+            rate_limit_max_sleep_seconds=rate_limit_max_sleep_seconds,
+        )
         self.entity_number_resolver = entity_number_resolver
         self.dry_run = dry_run
 

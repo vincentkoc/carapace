@@ -212,16 +212,18 @@ def test_github_sink_live_calls_api() -> None:
 
 
 def test_github_client_raises_rate_limit_error_with_reset(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"count": 0}
+    calls = {"api": 0, "rate_limit": 0}
 
     def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
-        calls["count"] += 1
-        if calls["count"] == 1:
+        endpoint = cmd[2]
+        if endpoint.endswith("/pulls?state=open"):
+            calls["api"] += 1
             return SimpleNamespace(
                 returncode=1,
                 stdout="",
                 stderr="gh: API rate limit exceeded for user ID 1 (HTTP 403)",
             )
+        calls["rate_limit"] += 1
         return SimpleNamespace(
             returncode=0,
             stdout='{"resources":{"core":{"remaining":0,"reset":1700000000}}}',
@@ -229,24 +231,28 @@ def test_github_client_raises_rate_limit_error_with_reset(monkeypatch: pytest.Mo
         )
 
     monkeypatch.setattr("subprocess.run", _fake_run)
-    client = GithubGhClient(repo="openclaw/openclaw")
+    client = GithubGhClient(repo="openclaw/openclaw", rate_limit_retries=0, rate_limit_max_sleep_seconds=10.0)
     with pytest.raises(GithubRateLimitError) as exc:
         client._api_json("pulls?state=open")
     assert isinstance(exc.value.reset_at, datetime)
     assert exc.value.reset_at == datetime.fromtimestamp(1700000000, UTC)
+    assert calls["api"] == 1
+    assert calls["rate_limit"] == 1
 
 
 def test_github_client_rate_limit_reset_fallback_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"count": 0}
+    calls = {"api": 0, "rate_limit": 0}
 
     def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
-        calls["count"] += 1
-        if calls["count"] == 1:
+        endpoint = cmd[2]
+        if endpoint.endswith("/pulls?state=open"):
+            calls["api"] += 1
             return SimpleNamespace(
                 returncode=1,
                 stdout="",
                 stderr="gh: secondary rate limit. please wait",
             )
+        calls["rate_limit"] += 1
         return SimpleNamespace(
             returncode=1,
             stdout="",
@@ -254,7 +260,36 @@ def test_github_client_rate_limit_reset_fallback_none(monkeypatch: pytest.Monkey
         )
 
     monkeypatch.setattr("subprocess.run", _fake_run)
-    client = GithubGhClient(repo="openclaw/openclaw")
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    client = GithubGhClient(repo="openclaw/openclaw", rate_limit_retries=1, secondary_backoff_base_seconds=1.0)
     with pytest.raises(GithubRateLimitError) as exc:
         client._api_json("pulls?state=open")
     assert exc.value.reset_at is None
+    assert calls["api"] == 2
+    assert calls["rate_limit"] == 2
+
+
+def test_github_client_retries_and_succeeds_after_secondary_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"api": 0, "rate_limit": 0}
+
+    def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
+        endpoint = cmd[2]
+        if endpoint.endswith("/pulls?state=open"):
+            calls["api"] += 1
+            if calls["api"] == 1:
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr="gh: secondary rate limit. please wait",
+                )
+            return SimpleNamespace(returncode=0, stdout='[{"id":1}]', stderr="")
+        calls["rate_limit"] += 1
+        return SimpleNamespace(returncode=1, stdout="", stderr="gh: unavailable")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    client = GithubGhClient(repo="openclaw/openclaw", rate_limit_retries=2, secondary_backoff_base_seconds=1.0)
+    payload = client._api_json("pulls?state=open")
+    assert payload == [{"id": 1}]
+    assert calls["api"] == 2
+    assert calls["rate_limit"] == 1
