@@ -178,8 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     process.add_argument(
         "--enrich-simple-scores",
-        action="store_true",
-        help="When enriching in minimal mode, also fetch mergeable/check-status review signals (extra API calls)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When enriching in minimal mode, also fetch mergeable/approvals/check-status review signals (extra API calls)",
     )
     process.add_argument(
         "--enrich-mode",
@@ -239,8 +240,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     enrich.add_argument(
         "--enrich-simple-scores",
-        action="store_true",
-        help="When enriching in minimal mode, also fetch mergeable/check-status review signals (extra API calls)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When enriching in minimal mode, also fetch mergeable/approvals/check-status review signals (extra API calls)",
     )
     enrich.add_argument(
         "--enrich-mode",
@@ -402,6 +404,9 @@ def _enrich_entities_if_needed(
         rate_limit_max_sleep_seconds=args.gh_rate_limit_max_sleep_seconds,
     )
     watermarks = storage.get_enrichment_watermarks(args.repo, kind="pr")
+    target_enrich_level = args.enrich_mode
+    if args.enrich_mode == "minimal" and args.enrich_simple_scores:
+        target_enrich_level = "minimal+scores"
     targets: list[tuple[int, SourceEntity]] = []
     skipped_recent = 0
     recent_cutoff: datetime | None = None
@@ -418,7 +423,9 @@ def _enrich_entities_if_needed(
         level = wm.get("enrich_level")
         same_version = enriched_for_updated_at == entity.updated_at.isoformat()
         if args.enrich_mode == "minimal":
-            needs = (not same_version) or (len(entity.changed_files) == 0)
+            needs = (not same_version) or (len(entity.changed_files) == 0) or (level != target_enrich_level)
+            if args.enrich_simple_scores:
+                needs = needs or (entity.ci_status.value == "unknown") or (entity.mergeable is None)
         else:
             needs = (not same_version) or (level != "full") or (len(entity.changed_files) == 0) or (entity.ci_status.value == "unknown")
         if needs:
@@ -501,7 +508,7 @@ def _enrich_entities_if_needed(
                 args.repo,
                 list(enriched_updates),
                 source="enrichment",
-                enrich_level=args.enrich_mode,
+                enrich_level=target_enrich_level,
             )
             enriched_updates.clear()
         if state_updates:

@@ -409,6 +409,12 @@ class GithubGhSourceConnector(SourceConnector):
                 pull_payload = self.client._api_json(f"pulls/{entity.number}") or {}
                 mergeable = pull_payload.get("mergeable")
                 mergeable_state = pull_payload.get("mergeable_state")
+                reviews_payload = self.client.get_page(f"pulls/{entity.number}/reviews", page=1, per_page=100)
+                approvals = 0
+                for review_item in reviews_payload:
+                    state = (review_item.get("state") or "").upper()
+                    if state == "APPROVED":
+                        approvals += 1
                 head_sha = (pull_payload.get("head") or {}).get("sha")
                 ci_status = entity.ci_status
                 status_payload: dict[str, Any] = {}
@@ -422,6 +428,7 @@ class GithubGhSourceConnector(SourceConnector):
                         "mergeable": mergeable,
                         "mergeable_state": mergeable_state,
                         "ci_status": ci_status,
+                        "approvals": approvals,
                         "external_reviews": external_reviews,
                     }
                 )

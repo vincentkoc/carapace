@@ -168,6 +168,8 @@ def test_enrich_entity_minimal_uses_files_fast_path() -> None:
                 return [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-old\n+new"}]
             if endpoint == "pulls/1/commits":
                 return [{"sha": "abc123", "commit": {"message": "fix: sample"}}]
+            if endpoint == "pulls/1/reviews":
+                return [{"state": "APPROVED"}, {"state": "COMMENTED"}]
             return []
 
         def _api_json(self, endpoint: str, method: str = "GET", body=None):
@@ -213,6 +215,8 @@ def test_enrich_entity_minimal_can_include_simple_scores() -> None:
                 return [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-old\n+new"}]
             if endpoint == "pulls/1/commits":
                 return [{"sha": "abc123", "commit": {"message": "fix: sample"}}]
+            if endpoint == "pulls/1/reviews":
+                return [{"state": "APPROVED"}, {"state": "COMMENTED"}]
             return []
 
         def _api_json(self, endpoint: str, method: str = "GET", body=None):
@@ -252,11 +256,13 @@ def test_enrich_entity_minimal_can_include_simple_scores() -> None:
     assert enriched.mergeable is True
     assert enriched.mergeable_state == "clean"
     assert enriched.ci_status == CIStatus.PASS
+    assert enriched.approvals == 1
     assert enriched.external_reviews
     assert enriched.external_reviews[0].provider == "greptile"
     assert enriched.external_reviews[0].overall_score == 0.81
     assert ("_api_json", "pulls/1") in score_client.calls
     assert ("_api_json", "commits/abc123/status") in score_client.calls
+    assert ("get_page", "pulls/1/reviews") in score_client.calls
 
 
 class FakeSinkClient:
