@@ -71,6 +71,12 @@
           <label>Clusters</label>
           <input type="number" min="10" max="2000" x-model="maxClusters" @change="reloadGraph()" />
           <label><input type="checkbox" x-model="includeAuthors" @change="reloadGraph()" /> authors</label>
+          <label>Layout</label>
+          <select x-model="layoutMode" @change="reloadGraph()">
+            <option value="auto">auto</option>
+            <option value="elastic">elastic</option>
+            <option value="fast">fast</option>
+          </select>
 
           <button @click="focusAll()">all clusters</button>
           <span class="muted" x-text="graphStats"></span>
@@ -88,6 +94,7 @@
           minEdge: 0.15,
           maxClusters: 60,
           includeAuthors: false,
+          layoutMode: "auto",
           selectedCluster: null,
           cy: null,
           graphStats: "",
@@ -134,7 +141,8 @@
             if (this.cy) this.cy.destroy();
             const nodeCount = (elements?.nodes || []).length;
             const showLabels = nodeCount <= 280;
-            const fastLayout = nodeCount > 320;
+            const useFastLayout = this.layoutMode === "fast" || (this.layoutMode === "auto" && nodeCount > 320);
+            const useElasticLayout = this.layoutMode === "elastic" || (this.layoutMode === "auto" && nodeCount <= 320);
             this.cy = cytoscape({
               container: document.getElementById("graph"),
               elements,
@@ -144,15 +152,39 @@
                 { selector: 'node[kind = "pr"]', style: { "background-color": "#2563eb" } },
                 { selector: 'node[kind = "issue"]', style: { "background-color": "#dc2626" } },
                 { selector: 'node[kind = "author"]', style: { "background-color": "#7c3aed" } },
-                { selector: 'edge[kind = "similarity"]', style: { "line-color": "#475569", width: "mapData(weight, 0, 1, 1, 6)", "curve-style": "bezier", opacity: 0.65 } },
+                { selector: 'edge[kind = "similarity"]', style: { "line-color": "#475569", width: "mapData(weight, 0, 1, 1, 6)", "curve-style": "unbundled-bezier", opacity: 0.65 } },
                 { selector: 'edge[kind = "in_cluster"]', style: { "line-color": "#0f766e", width: 1.2, opacity: 0.4 } },
                 { selector: 'edge[kind = "authored_by"]', style: { "line-color": "#7c3aed", width: 1, opacity: 0.45 } },
                 { selector: 'edge[kind = "references"]', style: { "line-color": "#b45309", width: 2.2, "line-style": "dashed", opacity: 0.85 } },
                 { selector: 'edge[kind = "cluster_bridge"]', style: { "line-color": "#0f766e", width: "mapData(weight, 0, 5, 1, 4)", "line-style": "dotted", opacity: 0.55 } },
               ],
-              layout: fastLayout
+              layout: useFastLayout
                 ? { name: "grid", avoidOverlap: true, avoidOverlapPadding: 6, padding: 16 }
-                : { name: "cose", animate: false, padding: 24, nodeRepulsion: 9000, idealEdgeLength: 90 },
+                : {
+                    name: "cose",
+                    animate: useElasticLayout,
+                    animationDuration: 900,
+                    animationEasing: "ease-out-cubic",
+                    randomize: true,
+                    fit: true,
+                    padding: 24,
+                    nodeRepulsion: 12000,
+                    idealEdgeLength: 100,
+                    edgeElasticity: 160,
+                    gravity: 0.2,
+                    numIter: 800,
+                  },
+            });
+
+            this.cy.on("tap", "node", (evt) => {
+              const focus = evt.target;
+              const neighborhood = focus.closedNeighborhood();
+              const others = this.cy.elements().difference(neighborhood);
+              others.animate({ style: { opacity: 0.12 } }, { duration: 180 });
+              neighborhood.animate({ style: { opacity: 1.0 } }, { duration: 180 });
+              setTimeout(() => {
+                this.cy.elements().animate({ style: { opacity: 1.0 } }, { duration: 220 });
+              }, 1200);
             });
           },
         };
