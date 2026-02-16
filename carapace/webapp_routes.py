@@ -59,7 +59,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
     response_cache_fifo: list[tuple[str, str, str]] = []
     max_response_cache_entries = 64
     report_cache: dict[str, tuple[float, EngineReport]] = {}
-    report_cache_ttl_seconds = 5.0
+    report_cache_ttl_seconds = 120.0
 
     def _repo_or_default(repo: str | None) -> str:
         if repo:
