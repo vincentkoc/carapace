@@ -107,6 +107,18 @@ Enrichment watermark behavior:
 - Re-processing skips PR enrichment when the stored watermark already matches current `updated_at`.
 - Full ingest does not erase enriched payloads when PR revision has not changed.
 
+Lightweight graph UI (FastAPI + HTMX + Alpine + Cytoscape):
+```bash
+pip install -e .[dev,ui]
+carapace serve-ui \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --skip-repo-path-check \
+  --host 127.0.0.1 \
+  --port 8765
+```
+Then open `http://127.0.0.1:8765`.
+
 Optional routing application:
 ```bash
 # dry run (default)

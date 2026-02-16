@@ -28,6 +28,11 @@ dev = [
   "codespell>=2.4",
   "bandit>=1.8"
 ]
+ui = [
+  "fastapi>=0.116",
+  "uvicorn>=0.35",
+  "jinja2>=3.1",
+]
 
 [project.scripts]
 carapace = "carapace.cli:main"
@@ -38,6 +43,9 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["carapace*"]
+
+[tool.setuptools.package-data]
+carapace = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -60,5 +68,9 @@ exclude = [
 module = [
   "yaml",
   "yaml.*",
+  "fastapi",
+  "fastapi.*",
+  "uvicorn",
+  "uvicorn.*",
 ]
 ignore_missing_imports = true

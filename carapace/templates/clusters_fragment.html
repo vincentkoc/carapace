@@ -1,0 +1,26 @@
+{% if clusters|length == 0 %}
+<div class="muted">No clusters match current filters.</div>
+{% endif %}
+
+{% for cluster in clusters %}
+<div class="cluster-card">
+  <h4>{{ cluster.cluster_id }}</h4>
+  <div class="muted">
+    <span class="pill">{{ cluster.cluster_type }}</span>
+    members={{ cluster.members|length }}
+    priority={{ "%.2f"|format(cluster.priority) }}
+  </div>
+  <div class="muted" style="margin-top:6px;">canonical={{ cluster.canonical or "none" }}</div>
+  <div style="margin-top:8px; display:flex; gap:6px;">
+    <button onclick="window.carapaceSelectCluster('{{ cluster.cluster_id }}')">focus graph</button>
+  </div>
+  <details style="margin-top:8px;">
+    <summary class="muted">members</summary>
+    <ul style="margin:6px 0 0 18px; padding:0;">
+      {% for title in cluster_entity_titles[cluster.cluster_id] %}
+      <li style="font-size:12px; margin-bottom:2px;">{{ title }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+</div>
+{% endfor %}

@@ -288,6 +288,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_flags(audit)
     _add_repo_validation_flags(audit)
 
+    serve_ui = sub.add_parser("serve-ui", help="Run lightweight graph UI/API over stored SQLite data")
+    serve_ui.add_argument("--repo", help="Default repo slug shown in UI, e.g. owner/repo")
+    serve_ui.add_argument("--host", default="127.0.0.1", help="Bind host")
+    serve_ui.add_argument("--port", type=int, default=8765, help="Bind port")
+    serve_ui.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable uvicorn auto-reload (development only)",
+    )
+    _add_common_config_flags(serve_ui)
+    _add_repo_validation_flags(serve_ui)
+
     scan_github = sub.add_parser("scan-github", help="One-shot GitHub ingest+process")
     scan_github.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
     scan_github.add_argument("--gh-bin", default="gh", help="Path/name of gh binary")
@@ -828,6 +840,25 @@ def _run_db_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_serve_ui(args: argparse.Namespace) -> int:
+    _validate_repo_path_if_needed(args)
+    config = _load_config(args)
+    if config.storage.backend != "sqlite":
+        raise ValueError("serve-ui currently requires storage.backend=sqlite")
+
+    try:
+        import uvicorn
+    except ImportError as exc:  # pragma: no cover - dependency/runtime
+        raise RuntimeError("Missing optional UI dependencies. Install with: pip install 'carapace[ui]'") from exc
+
+    from carapace.webapp import create_app
+
+    app = create_app(config)
+    logger.info("Starting UI on http://%s:%s (repo=%s)", args.host, args.port, args.repo or "auto")
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, log_level=args.log_level.lower())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -845,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_scan_github(args)
     if args.command == "db-audit":
         return _run_db_audit(args)
+    if args.command == "serve-ui":
+        return _run_serve_ui(args)
 
     parser.print_help()
     return 1
