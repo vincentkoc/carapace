@@ -172,6 +172,7 @@ class Cluster(BaseModel):
 
     id: str
     members: list[str]
+    cluster_type: str = "generic"
 
 
 class MemberDecision(BaseModel):

@@ -105,3 +105,24 @@ def test_weak_edge_with_hard_link_merges_directly() -> None:
     )
     assert len(clusters) == 1
     assert set(clusters[0].members) == {"a", "b"}
+
+
+def test_cluster_type_singleton_and_duplicate_candidate() -> None:
+    clusters = build_clusters(
+        ["pr:1", "pr:2", "issue:1"],
+        [_edge("pr:1", "pr:2", EdgeTier.STRONG, score=0.9)],
+    )
+    by_id = {cluster.id: cluster for cluster in clusters}
+    duplicate_cluster = next(cluster for cluster in by_id.values() if {"pr:1", "pr:2"} == set(cluster.members))
+    singleton_cluster = next(cluster for cluster in by_id.values() if set(cluster.members) == {"issue:1"})
+    assert duplicate_cluster.cluster_type == "duplicate_candidate"
+    assert singleton_cluster.cluster_type == "singleton_orphan"
+
+
+def test_cluster_type_linked_pair_for_hard_link_issue_pr() -> None:
+    clusters = build_clusters(
+        ["pr:1", "issue:1"],
+        [_edge("pr:1", "issue:1", EdgeTier.WEAK, score=0.1, hard_link=1.0)],
+    )
+    assert len(clusters) == 1
+    assert clusters[0].cluster_type == "linked_pair"

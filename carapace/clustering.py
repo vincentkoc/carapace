@@ -40,6 +40,36 @@ def _adjacency(edges: list[SimilarityEdge]) -> dict[str, dict[str, SimilarityEdg
     return graph
 
 
+def _entity_kind(entity_id: str) -> str:
+    if ":" not in entity_id:
+        return "unknown"
+    return entity_id.split(":", maxsplit=1)[0]
+
+
+def _classify_cluster(
+    members: list[str],
+    adjacency: dict[str, dict[str, SimilarityEdge]],
+) -> str:
+    if len(members) <= 1:
+        return "singleton_orphan"
+
+    prs = [member for member in members if _entity_kind(member) == "pr"]
+    issues = [member for member in members if _entity_kind(member) == "issue"]
+
+    if len(prs) >= 2 or len(issues) >= 2:
+        return "duplicate_candidate"
+
+    if len(prs) == 1 and len(issues) == 1:
+        edge = adjacency.get(prs[0], {}).get(issues[0])
+        if edge and edge.breakdown.hard_link_overlap >= 0.5:
+            return "linked_pair"
+        return "mixed_pair"
+
+    if prs and issues:
+        return "mixed_related"
+    return "related_group"
+
+
 def _prune_weak_tails(
     members: list[str],
     adjacency: dict[str, dict[str, SimilarityEdge]],
@@ -143,6 +173,12 @@ def build_clusters(
 
     clusters: list[Cluster] = []
     for idx, members in enumerate(sorted(expanded_groups, key=lambda items: (-len(items), items))):
-        clusters.append(Cluster(id=f"cluster-{idx + 1}", members=members))
+        clusters.append(
+            Cluster(
+                id=f"cluster-{idx + 1}",
+                members=members,
+                cluster_type=_classify_cluster(members, edge_lookup),
+            )
+        )
 
     return clusters
