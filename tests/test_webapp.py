@@ -100,4 +100,9 @@ def test_webapp_graph_falls_back_to_ingest_when_run_has_no_multi_clusters(tmp_pa
     assert graph.status_code == 200
     payload = graph.json()
     assert payload["mode"] == "ingest_fallback"
-    assert payload["node_count"] >= 2  # issue + author node
+    assert payload["node_count"] >= 1
+
+    graph_with_authors = client.get(f"/api/repos/{repo}/graph?include_authors=true")
+    assert graph_with_authors.status_code == 200
+    payload_with_authors = graph_with_authors.json()
+    assert payload_with_authors["node_count"] >= 2  # issue + author node

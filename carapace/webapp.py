@@ -103,23 +103,28 @@ def _build_graph_payload(
     author_cache: dict[str, dict[str, float | int | str]],
     cluster_id: str | None,
     min_edge_score: float,
+    max_clusters: int,
+    include_authors: bool,
 ) -> dict[str, Any]:
     include_members: set[str] = set()
     include_clusters: set[str] = set()
+    cluster_lookup = {cluster.id: cluster for cluster in report.clusters}
+    summary_values = sorted(summaries.values(), key=lambda item: (item.priority, len(item.members)), reverse=True)
+    default_cluster_ids = [item.cluster_id for item in summary_values if len(item.members) > 1][:max_clusters]
 
     if cluster_id:
-        target = next((cluster for cluster in report.clusters if cluster.id == cluster_id), None)
+        target = cluster_lookup.get(cluster_id)
         if target is None:
             raise HTTPException(status_code=404, detail=f"Unknown cluster id: {cluster_id}")
         include_clusters.add(target.id)
         include_members.update(target.members)
         include_members.update(target.shadow_members)
     else:
-        for cluster in report.clusters:
-            if len(cluster.members) > 1:
-                include_clusters.add(cluster.id)
-                include_members.update(cluster.members)
-                include_members.update(cluster.shadow_members)
+        for cid in default_cluster_ids:
+            include_clusters.add(cid)
+            cluster = cluster_lookup[cid]
+            include_members.update(cluster.members)
+            include_members.update(cluster.shadow_members)
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -171,33 +176,34 @@ def _build_graph_payload(
             }
         )
 
-        author_id = f"author:{entity.author}"
-        if author_id not in author_nodes:
-            author_nodes.add(author_id)
-            nodes.append(
+        if include_authors:
+            author_id = f"author:{entity.author}"
+            if author_id not in author_nodes:
+                author_nodes.add(author_id)
+                nodes.append(
+                    {
+                        "data": {
+                            "id": author_id,
+                            "kind": "author",
+                            "label": entity.author,
+                            "trust_score": round(trust_score, 3),
+                            "merged_pr_count": merged_pr_count,
+                            "size": 16 + (trust_score * 10.0),
+                        }
+                    }
+                )
+
+            edges.append(
                 {
                     "data": {
-                        "id": author_id,
-                        "kind": "author",
-                        "label": entity.author,
-                        "trust_score": round(trust_score, 3),
-                        "merged_pr_count": merged_pr_count,
-                        "size": 16 + (trust_score * 10.0),
+                        "id": f"authored_by:{entity.id}:{author_id}",
+                        "source": entity.id,
+                        "target": author_id,
+                        "kind": "authored_by",
+                        "weight": round(trust_score, 3),
                     }
                 }
             )
-
-        edges.append(
-            {
-                "data": {
-                    "id": f"authored_by:{entity.id}:{author_id}",
-                    "source": entity.id,
-                    "target": author_id,
-                    "kind": "authored_by",
-                    "weight": round(trust_score, 3),
-                }
-            }
-        )
 
         linked_issue_ids = set(entity.linked_issues) | set(entity.soft_linked_issues)
         for raw in linked_issue_ids:
@@ -235,6 +241,50 @@ def _build_graph_payload(
                 }
             )
 
+    # Build lightweight lineage bridges between clusters to avoid isolated islands.
+    cluster_authors: dict[str, set[str]] = {}
+    cluster_issue_refs: dict[str, set[str]] = {}
+    for cid in include_clusters:
+        authors: set[str] = set()
+        issue_refs: set[str] = set()
+        for entity_id in cluster_members.get(cid, set()):
+            entity = entities.get(entity_id)
+            if entity is None:
+                continue
+            authors.add(entity.author)
+            issue_refs.update(entity.linked_issues)
+            issue_refs.update(entity.soft_linked_issues)
+            if entity.kind.value == "issue" and entity.number is not None:
+                issue_refs.add(str(entity.number))
+        cluster_authors[cid] = authors
+        cluster_issue_refs[cid] = issue_refs
+
+    bridge_count = 0
+    cluster_ids = sorted(include_clusters)
+    for idx, left in enumerate(cluster_ids):
+        for right in cluster_ids[idx + 1 :]:
+            shared_authors = cluster_authors[left] & cluster_authors[right]
+            shared_refs = cluster_issue_refs[left] & cluster_issue_refs[right]
+            if not shared_authors and not shared_refs:
+                continue
+            bridge_weight = float(len(shared_authors) * 0.6 + len(shared_refs) * 1.0)
+            edges.append(
+                {
+                    "data": {
+                        "id": f"bridge:{left}:{right}",
+                        "source": left,
+                        "target": right,
+                        "kind": "cluster_bridge",
+                        "weight": round(bridge_weight, 3),
+                    }
+                }
+            )
+            bridge_count += 1
+            if bridge_count >= 2000:
+                break
+        if bridge_count >= 2000:
+            break
+
     for edge in report.edges:
         if edge.score < min_edge_score:
             continue
@@ -257,6 +307,7 @@ def _build_graph_payload(
         "repo": repo,
         "mode": "run",
         "cluster_id": cluster_id,
+        "max_clusters": max_clusters,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "elements": {"nodes": nodes, "edges": edges},
@@ -269,6 +320,7 @@ def _build_ingest_fallback_graph_payload(
     entities: list[SourceEntity],
     author_cache: dict[str, dict[str, float | int | str]],
     max_entities: int,
+    include_authors: bool,
 ) -> dict[str, Any]:
     selected = sorted(entities, key=lambda item: item.updated_at, reverse=True)[:max_entities]
     if not selected:
@@ -309,33 +361,34 @@ def _build_ingest_fallback_graph_payload(
             }
         )
 
-        author_id = f"author:{entity.author}"
-        if author_id not in author_nodes:
-            author_nodes.add(author_id)
-            nodes.append(
+        if include_authors:
+            author_id = f"author:{entity.author}"
+            if author_id not in author_nodes:
+                author_nodes.add(author_id)
+                nodes.append(
+                    {
+                        "data": {
+                            "id": author_id,
+                            "kind": "author",
+                            "label": entity.author,
+                            "trust_score": round(trust_score, 3),
+                            "merged_pr_count": merged_pr_count,
+                            "size": 16 + (trust_score * 10.0),
+                        }
+                    }
+                )
+
+            edges.append(
                 {
                     "data": {
-                        "id": author_id,
-                        "kind": "author",
-                        "label": entity.author,
-                        "trust_score": round(trust_score, 3),
-                        "merged_pr_count": merged_pr_count,
-                        "size": 16 + (trust_score * 10.0),
+                        "id": f"authored_by:{entity.id}:{author_id}",
+                        "source": entity.id,
+                        "target": author_id,
+                        "kind": "authored_by",
+                        "weight": round(trust_score, 3),
                     }
                 }
             )
-
-        edges.append(
-            {
-                "data": {
-                    "id": f"authored_by:{entity.id}:{author_id}",
-                    "source": entity.id,
-                    "target": author_id,
-                    "kind": "authored_by",
-                    "weight": round(trust_score, 3),
-                }
-            }
-        )
 
         linked_issue_ids = set(entity.linked_issues) | set(entity.soft_linked_issues)
         for raw in linked_issue_ids:
@@ -446,7 +499,9 @@ def create_app(config: CarapaceConfig) -> FastAPI:
         repo: str,
         cluster_id: str | None = None,
         min_edge_score: float = Query(default=0.15, ge=0.0, le=1.0),
-        fallback_max_entities: int = Query(default=1200, ge=50, le=5000),
+        fallback_max_entities: int = Query(default=600, ge=50, le=5000),
+        max_clusters: int = Query(default=80, ge=10, le=2000),
+        include_authors: bool = Query(default=False),
     ) -> JSONResponse:
         payload: dict[str, Any]
         try:
@@ -460,6 +515,8 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 author_cache=author_cache,
                 cluster_id=cluster_id,
                 min_edge_score=min_edge_score,
+                max_clusters=max_clusters,
+                include_authors=include_authors,
             )
             if payload["node_count"] == 0:
                 ingest_entities = storage.load_ingested_entities(
@@ -475,6 +532,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                     entities=ingest_entities,
                     author_cache=author_cache,
                     max_entities=fallback_max_entities,
+                    include_authors=include_authors,
                 )
         except HTTPException:
             ingest_entities = storage.load_ingested_entities(
@@ -492,6 +550,7 @@ def create_app(config: CarapaceConfig) -> FastAPI:
                 entities=ingest_entities,
                 author_cache=author_cache,
                 max_entities=fallback_max_entities,
+                include_authors=include_authors,
             )
         return JSONResponse(payload)
 
