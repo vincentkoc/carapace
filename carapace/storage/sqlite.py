@@ -2,12 +2,37 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from carapace.models import EngineReport, Fingerprint, SourceEntity
+
+
+def _fingerprint_cache_input_hash(entity: SourceEntity) -> str:
+    material = {
+        "id": entity.id,
+        "kind": entity.kind.value,
+        "title": entity.title,
+        "body": entity.body,
+        "labels": entity.labels,
+        "linked_issues": entity.linked_issues,
+        "soft_linked_issues": entity.soft_linked_issues,
+        "changed_files": entity.changed_files,
+        "diff_hunks": [hunk.model_dump(mode="json") for hunk in entity.diff_hunks],
+        "commits": entity.commits,
+        "patch_ids": entity.patch_ids,
+        "additions": entity.additions,
+        "deletions": entity.deletions,
+        "ci_status": entity.ci_status.value,
+        "approvals": entity.approvals,
+        "review_comments": entity.review_comments,
+        "external_reviews": [review.model_dump(mode="json") for review in entity.external_reviews],
+    }
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.blake2b(encoded, digest_size=20).hexdigest()
 
 
 class SQLiteStorage:
@@ -119,6 +144,7 @@ class SQLiteStorage:
                 """
             )
             self._ensure_ingest_columns(conn)
+            self._ensure_fingerprint_cache_columns(conn)
 
     @staticmethod
     def _ensure_ingest_columns(conn: sqlite3.Connection) -> None:
@@ -135,6 +161,13 @@ class SQLiteStorage:
 
         for statement in to_add:
             conn.execute(statement)
+
+    @staticmethod
+    def _ensure_fingerprint_cache_columns(conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(fingerprint_cache)").fetchall()
+        columns = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+        if "input_hash" not in columns:
+            conn.execute("ALTER TABLE fingerprint_cache ADD COLUMN input_hash TEXT")
 
     def save_run(
         self,
@@ -500,10 +533,11 @@ class SQLiteStorage:
         if not entities:
             return {}
         expected_updates = {entity.id: entity.updated_at.isoformat() for entity in entities}
+        expected_hashes = {entity.id: _fingerprint_cache_input_hash(entity) for entity in entities}
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT entity_id, updated_at, payload_json
+                SELECT entity_id, updated_at, payload_json, input_hash
                 FROM fingerprint_cache
                 WHERE repo = ? AND model_id = ?
                 """,
@@ -514,7 +548,12 @@ class SQLiteStorage:
         for row in rows:
             entity_id = row["entity_id"]
             expected = expected_updates.get(entity_id)
+            expected_hash = expected_hashes.get(entity_id)
             if expected is None or row["updated_at"] != expected:
+                continue
+            if not expected_hash:
+                continue
+            if row["input_hash"] != expected_hash:
                 continue
             try:
                 out[entity_id] = Fingerprint.model_validate_json(row["payload_json"])
@@ -530,18 +569,20 @@ class SQLiteStorage:
         *,
         model_id: str,
     ) -> int:
-        rows: list[tuple[str, str, str, str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str, str, str]] = []
         now = datetime.now(UTC).isoformat()
         for entity in entities:
             fp = fingerprints.get(entity.id)
             if fp is None:
                 continue
+            input_hash = _fingerprint_cache_input_hash(entity)
             rows.append(
                 (
                     repo,
                     entity.id,
                     model_id,
                     entity.updated_at.isoformat(),
+                    input_hash,
                     fp.model_dump_json(),
                     now,
                 )
@@ -554,10 +595,11 @@ class SQLiteStorage:
             conn.executemany(
                 """
                 INSERT INTO fingerprint_cache (
-                  repo, entity_id, model_id, updated_at, payload_json, computed_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  repo, entity_id, model_id, updated_at, input_hash, payload_json, computed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(repo, entity_id, model_id) DO UPDATE SET
                   updated_at=excluded.updated_at,
+                  input_hash=excluded.input_hash,
                   payload_json=excluded.payload_json,
                   computed_at=excluded.computed_at
                 """,

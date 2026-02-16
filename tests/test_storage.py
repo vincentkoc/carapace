@@ -346,3 +346,8 @@ def test_fingerprint_cache_respects_updated_at(tmp_path: Path) -> None:
     newer_entity = entity.model_copy(update={"updated_at": entity.updated_at + timedelta(days=1)})
     misses = storage.load_fingerprint_cache("acme/repo", [newer_entity], model_id="test-model")
     assert misses == {}
+
+    # Same updated_at but changed fingerprint inputs should invalidate cache.
+    changed_entity = entity.model_copy(update={"changed_files": ["src/new.py"]})
+    misses_same_timestamp = storage.load_fingerprint_cache("acme/repo", [changed_entity], model_id="test-model")
+    assert misses_same_timestamp == {}
