@@ -166,8 +166,13 @@ def rank_canonicals(
                 canonical_kind = _entity_kind(canonical_for_kind)
                 same_kind = member_kind == canonical_kind or member_kind == "default" or canonical_kind == "default"
                 meets_similarity = sim_to_canonical >= cfg.duplicate_threshold or lineage_to_canonical >= 0.5
+                lineage_supported = lineage_to_canonical >= 0.5 and (
+                    hard_link_overlap >= cfg.duplicate_hard_link_overlap_min
+                    or hunk_overlap >= cfg.duplicate_hunk_overlap_min
+                    or (title_salient_overlap >= cfg.duplicate_title_salient_overlap_min and semantic_text >= cfg.duplicate_semantic_text_min)
+                )
                 has_duplicate_evidence = (
-                    lineage_to_canonical >= 0.5
+                    lineage_supported
                     or (
                         hard_link_overlap >= cfg.duplicate_hard_link_overlap_min
                         and (file_overlap >= cfg.duplicate_hard_link_file_overlap_min or hunk_overlap >= cfg.duplicate_hard_link_hunk_overlap_min or title_salient_overlap >= cfg.duplicate_hard_link_title_overlap_min)

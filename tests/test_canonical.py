@@ -81,7 +81,7 @@ def test_rank_canonical_prefers_stronger_quality_signals() -> None:
     assert by_id["b"].state == DecisionState.DUPLICATE
 
 
-def test_lineage_overlap_marks_duplicate_even_below_duplicate_threshold() -> None:
+def test_lineage_overlap_marks_duplicate_when_supported_by_hunk_overlap() -> None:
     cfg = CanonicalConfig(duplicate_threshold=0.95)
     clusters = [Cluster(id="cluster-1", members=["a", "b"])]
     fingerprints = {
@@ -92,12 +92,41 @@ def test_lineage_overlap_marks_duplicate_even_below_duplicate_threshold() -> Non
         "a": LowPassDecision(entity_id="a", state="pass", priority_weight=1.0),
         "b": LowPassDecision(entity_id="b", state="pass", priority_weight=1.0),
     }
-    edges = [_edge("a", "b", score=0.6, lineage=0.8)]
+    edges = [_edge("a", "b", score=0.6, lineage=0.8, hunk_overlap=0.9)]
 
     d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
     non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
     assert non_canonical.state == DecisionState.DUPLICATE
     assert non_canonical.score == 0.6
+
+
+def test_lineage_overlap_without_supporting_signals_stays_related() -> None:
+    cfg = CanonicalConfig(duplicate_threshold=0.1)
+    clusters = [Cluster(id="cluster-1", members=["a", "b"])]
+    fingerprints = {
+        "a": _fp("a", CIStatus.PASS, reviewer=0.6, approvals=1, files=["src/cache.py"]),
+        "b": _fp("b", CIStatus.PASS, reviewer=0.5, approvals=1, files=["src/cache.py"]),
+    }
+    low_pass = {
+        "a": LowPassDecision(entity_id="a", state="pass", priority_weight=1.0),
+        "b": LowPassDecision(entity_id="b", state="pass", priority_weight=1.0),
+    }
+    edges = [
+        _edge(
+            "a",
+            "b",
+            score=0.6,
+            lineage=0.8,
+            hunk_overlap=0.1,
+            hard_link_overlap=0.0,
+            title_salient_overlap=0.0,
+            semantic_text=0.4,
+        )
+    ]
+
+    d = rank_canonicals(clusters, fingerprints, edges, low_pass, cfg)[0]
+    non_canonical = next(m for m in d.member_decisions if m.entity_id != d.canonical_entity_id)
+    assert non_canonical.state == DecisionState.RELATED
 
 
 def test_tie_margin_marks_runner_up_for_human_tie_break() -> None:

@@ -120,11 +120,69 @@ def _prune_weak_tails(
     return groups
 
 
+def _split_large_cluster(
+    members: list[str],
+    adjacency: dict[str, dict[str, SimilarityEdge]],
+    *,
+    split_size: int | None,
+    semantic_text_min: float,
+    title_overlap_min: float,
+    hard_link_min: float,
+    lineage_hunk_min: float,
+    lineage_semantic_min: float,
+) -> list[list[str]]:
+    if split_size is None or len(members) < split_size:
+        return [sorted(members)]
+
+    member_set = set(members)
+    graph: dict[str, set[str]] = defaultdict(set)
+
+    for node in members:
+        for other, edge in adjacency.get(node, {}).items():
+            if other not in member_set:
+                continue
+            bd = edge.breakdown
+            lineage_supported = bd.lineage >= 0.5 and (bd.hunk_overlap >= lineage_hunk_min or bd.hard_link_overlap >= hard_link_min or (bd.title_salient_overlap >= title_overlap_min and bd.semantic_text >= lineage_semantic_min))
+            cohesive = bd.hard_link_overlap >= hard_link_min or lineage_supported or (bd.title_salient_overlap >= title_overlap_min and bd.semantic_text >= semantic_text_min)
+            if not cohesive:
+                continue
+            graph[node].add(other)
+            graph[other].add(node)
+
+    groups: list[list[str]] = []
+    seen: set[str] = set()
+    for node in sorted(members):
+        if node in seen:
+            continue
+        stack = [node]
+        component: list[str] = []
+        seen.add(node)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            for other in graph.get(current, set()):
+                if other not in seen:
+                    seen.add(other)
+                    stack.append(other)
+        groups.append(sorted(component))
+
+    # Keep original grouping when split heuristics would not meaningfully partition.
+    if len(groups) == 1:
+        return [sorted(members)]
+    return groups
+
+
 def build_clusters(
     entity_ids: list[str],
     edges: list[SimilarityEdge],
     *,
     tail_prune_score: float | None = None,
+    large_cluster_split_size: int | None = None,
+    large_cluster_split_semantic_text_min: float = 0.65,
+    large_cluster_split_title_overlap_min: float = 0.20,
+    large_cluster_split_hard_link_min: float = 0.50,
+    large_cluster_split_lineage_hunk_min: float = 0.80,
+    large_cluster_split_lineage_semantic_min: float = 0.80,
 ) -> list[Cluster]:
     uf = UnionFind(entity_ids)
 
@@ -169,7 +227,20 @@ def build_clusters(
     edge_lookup = _adjacency(edges)
     expanded_groups: list[list[str]] = []
     for members in grouped.values():
-        expanded_groups.extend(_prune_weak_tails(members, edge_lookup, tail_prune_score))
+        pruned = _prune_weak_tails(members, edge_lookup, tail_prune_score)
+        for group in pruned:
+            expanded_groups.extend(
+                _split_large_cluster(
+                    group,
+                    edge_lookup,
+                    split_size=large_cluster_split_size,
+                    semantic_text_min=large_cluster_split_semantic_text_min,
+                    title_overlap_min=large_cluster_split_title_overlap_min,
+                    hard_link_min=large_cluster_split_hard_link_min,
+                    lineage_hunk_min=large_cluster_split_lineage_hunk_min,
+                    lineage_semantic_min=large_cluster_split_lineage_semantic_min,
+                )
+            )
 
     clusters: list[Cluster] = []
     for idx, members in enumerate(sorted(expanded_groups, key=lambda items: (-len(items), items))):

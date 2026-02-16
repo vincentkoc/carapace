@@ -126,3 +126,43 @@ def test_cluster_type_linked_pair_for_hard_link_issue_pr() -> None:
     )
     assert len(clusters) == 1
     assert clusters[0].cluster_type == "linked_pair"
+
+
+def test_large_cluster_split_breaks_low_cohesion_components() -> None:
+    clusters = build_clusters(
+        ["a", "b", "c", "d"],
+        [
+            _edge("a", "b", EdgeTier.STRONG, score=0.9),
+            _edge("b", "c", EdgeTier.STRONG, score=0.9),
+            _edge("c", "d", EdgeTier.STRONG, score=0.9),
+        ],
+        large_cluster_split_size=3,
+        large_cluster_split_semantic_text_min=0.6,
+        large_cluster_split_title_overlap_min=0.2,
+        large_cluster_split_hard_link_min=0.5,
+    )
+    members = [set(cluster.members) for cluster in clusters]
+    assert {"a"} in members
+    assert {"b"} in members
+    assert {"c"} in members
+    assert {"d"} in members
+
+
+def test_large_cluster_split_does_not_keep_lineage_only_chains() -> None:
+    clusters = build_clusters(
+        ["a", "b", "c"],
+        [
+            _edge("a", "b", EdgeTier.STRONG, score=0.8, lineage=1.0),
+            _edge("b", "c", EdgeTier.STRONG, score=0.8, lineage=1.0),
+        ],
+        large_cluster_split_size=3,
+        large_cluster_split_semantic_text_min=0.6,
+        large_cluster_split_title_overlap_min=0.2,
+        large_cluster_split_hard_link_min=0.5,
+        large_cluster_split_lineage_hunk_min=0.8,
+        large_cluster_split_lineage_semantic_min=0.8,
+    )
+    members = [set(cluster.members) for cluster in clusters]
+    assert {"a"} in members
+    assert {"b"} in members
+    assert {"c"} in members

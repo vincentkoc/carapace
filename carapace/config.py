@@ -48,6 +48,12 @@ class SimilarityConfig(BaseModel):
     strong_score: float = 0.82
     top_k_candidates: int = 64
     cluster_tail_prune_score: float | None = 0.16
+    large_cluster_split_size: int | None = 10
+    large_cluster_split_semantic_text_min: float = 0.65
+    large_cluster_split_title_overlap_min: float = 0.20
+    large_cluster_split_hard_link_min: float = 0.50
+    large_cluster_split_lineage_hunk_min: float = 0.80
+    large_cluster_split_lineage_semantic_min: float = 0.80
     max_file_bucket_size: int = 300
     max_module_bucket_size: int = 800
     min_candidate_votes: int = 1
@@ -63,6 +69,7 @@ class SimilarityConfig(BaseModel):
     weight_winnow: float = 0.07
     size_penalty_weight: float = 0.10
     lineage_strong_overlap: float = 0.50
+    lineage_overlap_min_shared_patch_ids: int = 2
     hard_link_strong_overlap: float = 0.50
     hard_link_weak_overlap: float = 0.20
     hard_link_pr_strong_semantic_min: float = 0.50
@@ -86,6 +93,7 @@ class SimilarityConfig(BaseModel):
     unstructured_pr_semantic_text_min: float = 0.58
     unstructured_pr_simhash_min: float = 0.64
     broad_pr_min_files: int = 10
+    broad_pr_pair_min_files: int = 5
     broad_pr_title_overlap_min: float = 0.20
     broad_pr_semantic_text_min: float = 0.55
     minhash_num_perm: int = 64

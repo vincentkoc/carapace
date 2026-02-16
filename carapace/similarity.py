@@ -324,7 +324,12 @@ def score_pair(
     hunk_overlap = _jaccard(hunk_a, hunk_b)
     hard_link_overlap = max(_jaccard(hard_issue_a, hard_issue_b), _overlap_min(hard_issue_a, hard_issue_b))
     soft_link_overlap = _jaccard(soft_issue_a, soft_issue_b)
-    lineage = max(_jaccard(patch_a, patch_b), _overlap_min(patch_a, patch_b))
+    patch_overlap = _overlap_min(patch_a, patch_b)
+    patch_jaccard = _jaccard(patch_a, patch_b)
+    shared_patch_ids = len(patch_a & patch_b)
+    lineage = patch_jaccard
+    if shared_patch_ids >= cfg.lineage_overlap_min_shared_patch_ids:
+        lineage = max(lineage, patch_overlap)
     structure = 0.7 * hunk_overlap + 0.3 * file_overlap
     text_a = a.text_embedding or a.embedding
     text_b = b.text_embedding or b.embedding
@@ -378,18 +383,8 @@ def _edge_tier(
     kind_a = entity_a_id.split(":", maxsplit=1)[0]
     kind_b = entity_b_id.split(":", maxsplit=1)[0]
     is_issue_pr = {kind_a, kind_b} == {"issue", "pr"}
-    broad_pr_pair = (
-        kind_a == "pr"
-        and kind_b == "pr"
-        and len(fp_a.changed_files) >= cfg.broad_pr_min_files
-        and len(fp_b.changed_files) >= cfg.broad_pr_min_files
-    )
-    if (
-        broad_pr_pair
-        and breakdown.hard_link_overlap <= 0.0
-        and breakdown.title_salient_overlap < cfg.broad_pr_title_overlap_min
-        and breakdown.semantic_text < cfg.broad_pr_semantic_text_min
-    ):
+    broad_pr_pair = kind_a == "pr" and kind_b == "pr" and max(len(fp_a.changed_files), len(fp_b.changed_files)) >= cfg.broad_pr_min_files and min(len(fp_a.changed_files), len(fp_b.changed_files)) >= cfg.broad_pr_pair_min_files
+    if broad_pr_pair and breakdown.hard_link_overlap <= 0.0 and breakdown.title_salient_overlap < cfg.broad_pr_title_overlap_min and breakdown.semantic_text < cfg.broad_pr_semantic_text_min:
         return None
 
     if breakdown.hard_link_overlap >= cfg.hard_link_strong_overlap:

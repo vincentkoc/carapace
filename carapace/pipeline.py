@@ -17,11 +17,11 @@ from carapace.fingerprint import build_diff_text, build_fingerprint
 from carapace.hooks import HookManager, HookName
 from carapace.low_pass import apply_low_pass
 from carapace.models import (
+    Cluster,
     DecisionState,
     EngineReport,
     FilterState,
     Fingerprint,
-    Cluster,
     LowPassDecision,
     RoutingDecision,
     SourceEntity,
@@ -240,6 +240,12 @@ class CarapaceEngine:
             [entity.id for entity in active_entities],
             edges,
             tail_prune_score=self.config.similarity.cluster_tail_prune_score,
+            large_cluster_split_size=self.config.similarity.large_cluster_split_size,
+            large_cluster_split_semantic_text_min=self.config.similarity.large_cluster_split_semantic_text_min,
+            large_cluster_split_title_overlap_min=self.config.similarity.large_cluster_split_title_overlap_min,
+            large_cluster_split_hard_link_min=self.config.similarity.large_cluster_split_hard_link_min,
+            large_cluster_split_lineage_hunk_min=self.config.similarity.large_cluster_split_lineage_hunk_min,
+            large_cluster_split_lineage_semantic_min=self.config.similarity.large_cluster_split_lineage_semantic_min,
         )
         shadow_context_entities = self._attach_shadow_context(
             clusters=clusters,
@@ -461,10 +467,10 @@ class CarapaceEngine:
             cluster_id, _ = sorted(votes.items(), key=lambda item: (-item[1], item[0]))[0]
             if entity.id in attached_seen[cluster_id]:
                 continue
-            cluster = cluster_by_id.get(cluster_id)
-            if cluster is None:
+            target_cluster = cluster_by_id.get(cluster_id)
+            if target_cluster is None:
                 continue
-            cluster.shadow_members.append(entity.id)
+            target_cluster.shadow_members.append(entity.id)
             attached_seen[cluster_id].add(entity.id)
             attached += 1
 

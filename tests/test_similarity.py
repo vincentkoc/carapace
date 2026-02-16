@@ -384,3 +384,61 @@ def test_broad_scope_pr_pairs_with_low_title_and_semantic_are_blocked() -> None:
     )
     edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
     assert edges == []
+
+
+def test_broad_scope_gate_applies_to_asymmetric_file_counts() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=True, broad_pr_min_files=10, broad_pr_pair_min_files=5, broad_pr_title_overlap_min=0.2, broad_pr_semantic_text_min=0.55)
+    a = _fp(
+        "pr:1",
+        files=[f"src/a{idx}.py" for idx in range(12)],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=[f"h{idx}" for idx in range(12)],
+        embedding=[1.0, 0.0],
+        tokens=["cron", "timer", "schedule"],
+        title_tokens=["cron", "timer"],
+    )
+    b = _fp(
+        "pr:2",
+        files=[f"src/b{idx}.py" for idx in range(6)],
+        modules=["src/*"],
+        issues=[],
+        patch_ids=[],
+        hunks=[f"h{idx}" for idx in range(6)],
+        embedding=[0.0, 1.0],
+        tokens=["telegram", "oauth", "token"],
+        title_tokens=["telegram", "oauth"],
+    )
+    edges = compute_similarity_edges({"pr:1": a, "pr:2": b}, cfg)
+    assert edges == []
+
+
+def test_lineage_overlap_min_requires_multiple_shared_patch_ids() -> None:
+    cfg = SimilarityConfig(use_advanced_algorithms=False, lineage_overlap_min_shared_patch_ids=2)
+    a = _fp(
+        "pr:1",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=["p1", "p2", "p3", "p4"],
+        hunks=[],
+        embedding=[1.0, 0.0],
+        tokens=["alpha"],
+        title_tokens=["alpha"],
+    )
+    b = _fp(
+        "pr:2",
+        files=[],
+        modules=[],
+        issues=[],
+        patch_ids=["p1"],
+        hunks=[],
+        embedding=[0.0, 1.0],
+        tokens=["beta"],
+        title_tokens=["beta"],
+    )
+
+    score, breakdown = score_pair(a, b, cfg)
+    assert score < cfg.min_score
+    assert breakdown.lineage == 0.25
