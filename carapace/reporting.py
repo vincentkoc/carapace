@@ -132,7 +132,13 @@ def render_markdown_report(
     return "\n".join(lines)
 
 
-def write_report_bundle(report: EngineReport, output_dir: str | Path, entities: list[SourceEntity] | None = None) -> None:
+def write_report_bundle(
+    report: EngineReport,
+    output_dir: str | Path,
+    entities: list[SourceEntity] | None = None,
+    *,
+    include_singleton_orphans: bool = False,
+) -> None:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -148,5 +154,11 @@ def write_report_bundle(report: EngineReport, output_dir: str | Path, entities: 
         for entry in report.routing
     }
     (out / "labels_to_apply.json").write_text(json.dumps(labels_payload, indent=2))
-    (out / "triage_report.md").write_text(render_markdown_report(report, entities=entities, include_singleton_orphans=False))
+    (out / "triage_report.md").write_text(
+        render_markdown_report(
+            report,
+            entities=entities,
+            include_singleton_orphans=include_singleton_orphans,
+        )
+    )
     (out / "scan_profile.json").write_text(json.dumps(report.profile, indent=2))

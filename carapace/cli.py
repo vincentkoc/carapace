@@ -72,6 +72,15 @@ def _add_repo_validation_flags(cmd: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_report_flags(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument(
+        "--report-include-singletons",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include singleton_orphan clusters in triage_report.md detail section",
+    )
+
+
 def _add_github_rate_limit_flags(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument(
         "--gh-rate-limit-retries",
@@ -134,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--input", required=True, help="Path to input JSON array of entities")
     scan.add_argument("--output-dir", default="./carapace-out", help="Output directory")
     _add_common_config_flags(scan)
+    _add_report_flags(scan)
 
     ingest = sub.add_parser("ingest-github", help="Ingest GitHub entities into SQLite with resumable state")
     ingest.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
@@ -205,6 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_flags(process)
     _add_repo_validation_flags(process)
     _add_github_rate_limit_flags(process)
+    _add_report_flags(process)
 
     enrich = sub.add_parser("enrich-stored", help="Enrich stored PR details in SQLite without running scan")
     enrich.add_argument("--repo", required=True, help="GitHub repo slug, e.g. owner/repo")
@@ -287,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_flags(scan_github)
     _add_repo_validation_flags(scan_github)
     _add_github_rate_limit_flags(scan_github)
+    _add_report_flags(scan_github)
 
     return parser
 
@@ -296,7 +308,12 @@ def _run_scan(args: argparse.Namespace) -> int:
     config = _load_config(args)
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, args.output_dir, entities=entities)
+    write_report_bundle(
+        report,
+        args.output_dir,
+        entities=entities,
+        include_singleton_orphans=args.report_include_singletons,
+    )
     logger.info("Scan complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
     return 0
 
@@ -641,7 +658,12 @@ def _run_process_stored(args: argparse.Namespace) -> int:
 
     engine = _build_engine(config, storage=storage)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, args.output_dir, entities=entities)
+    write_report_bundle(
+        report,
+        args.output_dir,
+        entities=entities,
+        include_singleton_orphans=args.report_include_singletons,
+    )
     _maybe_apply_routing(args, entities, report)
 
     logger.info("Process complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
@@ -705,7 +727,12 @@ def _run_scan_github(args: argparse.Namespace) -> int:
 
     engine = _build_engine(config)
     report = engine.scan_entities(entities)
-    write_report_bundle(report, out_dir, entities=entities)
+    write_report_bundle(
+        report,
+        out_dir,
+        entities=entities,
+        include_singleton_orphans=args.report_include_singletons,
+    )
     _maybe_apply_routing(args, entities, report)
     logger.info("One-shot scan complete: processed=%s clusters=%s", report.processed_entities, len(report.clusters))
     return 0

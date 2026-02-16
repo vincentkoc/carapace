@@ -43,6 +43,44 @@ def test_scan_command_writes_reports(tmp_path: Path) -> None:
     assert (out_dir / "triage_report.md").exists()
 
 
+def test_scan_command_can_include_singleton_clusters_in_report(tmp_path: Path) -> None:
+    input_path = tmp_path / "entities.json"
+    out_dir = tmp_path / "out"
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    entities = [
+        {
+            "id": "pr:1",
+            "repo": "acme/repo",
+            "kind": "pr",
+            "number": 1,
+            "title": "Fix parser",
+            "body": "Fixes #1",
+            "author": "alice",
+            "changed_files": ["src/parser.py"],
+            "ci_status": "pass",
+        }
+    ]
+    input_path.write_text(json.dumps(entities))
+
+    exit_code = cli.main(
+        [
+            "scan",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(out_dir),
+            "--repo-path",
+            str(repo_path),
+            "--report-include-singletons",
+        ]
+    )
+    assert exit_code == 0
+    triage = (out_dir / "triage_report.md").read_text()
+    assert "## cluster-1" in triage
+
+
 def test_scan_github_command_uses_connector_and_can_save_input(tmp_path: Path, monkeypatch) -> None:
     out_dir = tmp_path / "out"
     repo_path = tmp_path / "repo"
