@@ -69,6 +69,7 @@ def render_markdown_report(
     entities: list[SourceEntity] | None = None,
     *,
     include_singleton_orphans: bool = False,
+    include_cluster_types: set[str] | None = None,
 ) -> str:
     titles = _entity_titles(entities)
     entity_by_id = _entity_index(entities)
@@ -104,13 +105,17 @@ def render_markdown_report(
     )
 
     omitted_singleton_orphans = 0
+    rendered_clusters = 0
     for decision in decisions:
         cluster = cluster_by_id.get(decision.cluster_id)
         cluster_type = cluster.cluster_type if cluster else "unknown"
+        if include_cluster_types is not None and cluster_type not in include_cluster_types:
+            continue
         if not include_singleton_orphans and cluster_type == "singleton_orphan":
             omitted_singleton_orphans += 1
             continue
 
+        rendered_clusters += 1
         lines.append(f"## {decision.cluster_id}")
         lines.append("")
         lines.append(f"- Type: {cluster_type}")
@@ -130,8 +135,10 @@ def render_markdown_report(
             lines.append(f"- {_display_entity(member.entity_id, titles)}: state={state} score={member.score:.3f}{extra}{signal_suffix}")
         lines.append("")
 
-    if omitted_singleton_orphans:
+    if omitted_singleton_orphans and include_cluster_types is None:
         lines.append(f"_Omitted {omitted_singleton_orphans} singleton_orphan clusters. Set include_singleton_orphans=true to print them._")
+    if include_cluster_types is not None and rendered_clusters == 0:
+        lines.append("_No clusters matched the requested filter._")
 
     return "\n".join(lines)
 
@@ -165,4 +172,26 @@ def write_report_bundle(
             include_singleton_orphans=include_singleton_orphans,
         )
     )
+    (out / "duplicate_candidates.md").write_text(
+        render_markdown_report(
+            report,
+            entities=entities,
+            include_singleton_orphans=True,
+            include_cluster_types={"duplicate_candidate"},
+        )
+    )
+    (out / "linked_pairs.md").write_text(
+        render_markdown_report(
+            report,
+            entities=entities,
+            include_singleton_orphans=True,
+            include_cluster_types={"linked_pair"},
+        )
+    )
+    cluster_views = {
+        "duplicate_candidate": [cluster.id for cluster in report.clusters if cluster.cluster_type == "duplicate_candidate"],
+        "linked_pair": [cluster.id for cluster in report.clusters if cluster.cluster_type == "linked_pair"],
+        "singleton_orphan": [cluster.id for cluster in report.clusters if cluster.cluster_type == "singleton_orphan"],
+    }
+    (out / "cluster_views.json").write_text(json.dumps(cluster_views, indent=2))
     (out / "scan_profile.json").write_text(json.dumps(report.profile, indent=2))

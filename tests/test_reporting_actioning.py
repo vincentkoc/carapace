@@ -109,6 +109,9 @@ def test_render_and_write_report_bundle(tmp_path: Path) -> None:
 
     write_report_bundle(report, tmp_path, entities=entities)
     assert (tmp_path / "triage_report.md").exists()
+    assert (tmp_path / "duplicate_candidates.md").exists()
+    assert (tmp_path / "linked_pairs.md").exists()
+    assert (tmp_path / "cluster_views.json").exists()
     assert (tmp_path / "clusters.json").exists()
     assert (tmp_path / "labels_to_apply.json").exists()
     assert (tmp_path / "scan_profile.json").exists()
@@ -181,3 +184,47 @@ def test_render_markdown_report_includes_shadow_context_line() -> None:
     ]
     markdown = render_markdown_report(report, entities=entities, include_singleton_orphans=True)
     assert "Shadow context (1): issue:9" in markdown
+
+
+def test_render_markdown_report_cluster_type_filter() -> None:
+    report = EngineReport(
+        processed_entities=3,
+        active_entities=3,
+        suppressed_entities=0,
+        skipped_entities=0,
+        clusters=[
+            Cluster(id="cluster-1", members=["pr:1", "pr:2"], cluster_type="duplicate_candidate"),
+            Cluster(id="cluster-2", members=["pr:3", "issue:3"], cluster_type="linked_pair"),
+        ],
+        edges=[],
+        canonical_decisions=[
+            CanonicalDecision(
+                cluster_id="cluster-1",
+                canonical_entity_id="pr:1",
+                canonical_pr_entity_id="pr:1",
+                member_decisions=[
+                    MemberDecision(entity_id="pr:1", state=DecisionState.CANONICAL, score=1.0),
+                    MemberDecision(entity_id="pr:2", state=DecisionState.RELATED, score=0.2),
+                ],
+            ),
+            CanonicalDecision(
+                cluster_id="cluster-2",
+                canonical_entity_id="pr:3",
+                canonical_pr_entity_id="pr:3",
+                canonical_issue_entity_id="issue:3",
+                member_decisions=[
+                    MemberDecision(entity_id="pr:3", state=DecisionState.CANONICAL, score=1.0),
+                    MemberDecision(entity_id="issue:3", state=DecisionState.CANONICAL, score=1.0),
+                ],
+            ),
+        ],
+        low_pass=[],
+        routing=[],
+    )
+    markdown = render_markdown_report(
+        report,
+        include_singleton_orphans=True,
+        include_cluster_types={"linked_pair"},
+    )
+    assert "## cluster-1" not in markdown
+    assert "## cluster-2" in markdown
