@@ -107,6 +107,41 @@ Enrichment watermark behavior:
 - Re-processing skips PR enrichment when the stored watermark already matches current `updated_at`.
 - Full ingest does not erase enriched payloads when PR revision has not changed.
 
+### Openclaw production label mapping
+
+`openclaw/openclaw` uses a different label taxonomy than the Carapace defaults (`triage/*`), so apply-routing should use an openclaw-specific override (e.g. `dedupe:*`, `close:*`, `triage:*`).
+
+```bash
+cat > ./examples/openclaw.carapace.yaml <<'YAML'
+labels:
+  canonical: dedupe:parent
+  duplicate: dedupe:child
+  linked_pair: triage:needs-review
+  related: triage:needs-review
+  quarantine: triage:blocked
+  noise_suppressed: triage:blocked
+  close_candidate: close:superseded
+  ready_human: triage:needs-review
+YAML
+
+carapace scan-github \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --org-config ./examples/openclaw.carapace.yaml \
+  --save-input-json
+```
+
+If you prefer to reuse the prepared profile, use:
+
+```bash
+carapace scan-github \
+  --repo openclaw/openclaw \
+  --repo-path /path/to/local/openclaw \
+  --org-config ./examples/openclaw.carapace.yaml \
+  --apply-routing \
+  --save-input-json
+```
+
 Lightweight graph UI (FastAPI + HTMX + Alpine + Cytoscape):
 ```bash
 pip install -e .[dev,ui]
