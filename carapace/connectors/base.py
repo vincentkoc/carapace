@@ -8,6 +8,23 @@ from carapace.models import SourceEntity
 
 
 class SourceConnector(Protocol):
+    def restore_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+        query: str | None = None,
+    ) -> None: ...
+
+    def get_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+    ) -> str | None: ...
+
     def fetch_open_entities(
         self,
         max_prs: int = 200,

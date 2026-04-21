@@ -277,6 +277,13 @@ class FakeSinkClient:
         self.calls.append((endpoint, method, body))
         return {}
 
+    def get_paginated(self, endpoint: str, per_page: int = 100, max_items: int | None = None):
+        self.calls.append((endpoint, "GET", None))
+        if endpoint == "labels":
+            _ = (per_page, max_items)
+            return [{"name": "triage/duplicate"}, {"name": "triage/ready-human"}]
+        return []
+
 
 def test_github_sink_dry_run_no_api_calls() -> None:
     sink = GithubGhSinkConnector(repo="openclaw/openclaw", entity_number_resolver=lambda _: 12, dry_run=True)
@@ -297,9 +304,50 @@ def test_github_sink_live_calls_api() -> None:
     sink.post_comment("pr:12", "hello")
     sink.close_entity("pr:12")
 
-    assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) in fake_client.calls
+    assert ("labels", "GET", None) not in fake_client.calls
+    assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) not in fake_client.calls
     assert ("issues/12/comments", "POST", {"body": "hello"}) in fake_client.calls
     assert ("issues/12", "PATCH", {"state": "closed"}) in fake_client.calls
+
+
+def test_github_sink_skips_missing_labels() -> None:
+    sink = GithubGhSinkConnector(
+        repo="openclaw/openclaw",
+        entity_number_resolver=lambda _: 12,
+        dry_run=False,
+        disable_apply_labels=False,
+    )
+    fake_client = FakeSinkClient()
+    sink.client = fake_client  # type: ignore[assignment]
+
+    sink.apply_labels("pr:12", ["triage/duplicate", "triage/not-a-real-label"])
+    assert ("labels", "GET", None) in fake_client.calls
+    assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate"]}) in fake_client.calls
+    assert ("issues/12/labels", "POST", {"labels": ["triage/duplicate", "triage/not-a-real-label"]}) not in fake_client.calls
+
+
+def test_github_sink_no_labels_if_repo_labels_not_available() -> None:
+    sink = GithubGhSinkConnector(
+        repo="openclaw/openclaw",
+        entity_number_resolver=lambda _: 12,
+        dry_run=False,
+        disable_apply_labels=False,
+    )
+
+    class FailingSinkClient(FakeSinkClient):
+        def get_paginated(self, endpoint: str, per_page: int = 100, max_items: int | None = None):
+            self.calls.append((endpoint, "GET", None))
+            _ = (per_page, max_items)
+            if endpoint == "labels":
+                raise RuntimeError("gh unavailable")
+            return []
+
+    fake_client = FailingSinkClient()
+    sink.client = fake_client  # type: ignore[assignment]
+
+    sink.apply_labels("pr:12", ["triage/duplicate", "triage/not-a-real-label"])
+    assert ("labels", "GET", None) in fake_client.calls
+    assert all(call[0] != "issues/12/labels" for call in fake_client.calls)
 
 
 def test_github_client_raises_rate_limit_error_with_reset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -384,3 +432,57 @@ def test_github_client_retries_and_succeeds_after_secondary_rate_limit(monkeypat
     assert payload == [{"id": 1}]
     assert calls["api"] == 2
     assert calls["rate_limit"] == 1
+
+
+def test_github_client_reuses_cursor_next_link_for_large_issue_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    cursor_url = (
+        "https://api.github.com/repositories/1103012935/issues"
+        "?state=open&per_page=100&page=100&after=cursor-token"
+    )
+
+    def _fake_run(cmd, text=True, capture_output=True, check=False, input=None):  # noqa: ANN001,ARG001
+        endpoint = cmd[2]
+        calls.append(endpoint)
+        if endpoint.endswith("issues?state=open&per_page=100&page=99"):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "HTTP/2.0 200 OK\n"
+                    f'Link: <{cursor_url}>; rel="next"\n'
+                    "Content-Type: application/json\n"
+                    "\n"
+                    '[{"id":99}]'
+                ),
+                stderr="",
+            )
+        if endpoint == cursor_url:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "HTTP/2.0 200 OK\n"
+                    "Content-Type: application/json\n"
+                    "\n"
+                    '[{"id":100}]'
+                ),
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="gh: Pagination with the page parameter is not supported for large datasets (HTTP 422)",
+        )
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    client = GithubGhClient(repo="openclaw/openclaw", rate_limit_retries=0)
+    page_99 = client.get_page("issues?state=open", page=99, per_page=100)
+    page_100 = client.get_page("issues?state=open", page=100, per_page=100)
+    page_101 = client.get_page("issues?state=open", page=101, per_page=100)
+
+    assert page_99 == [{"id": 99}]
+    assert page_100 == [{"id": 100}]
+    assert page_101 == []
+    assert calls == [
+        "repos/openclaw/openclaw/issues?state=open&per_page=100&page=99",
+        cursor_url,
+    ]

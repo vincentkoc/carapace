@@ -39,6 +39,22 @@ def ingest_github_to_sqlite(
 
     pr_state = "all" if ingest_cfg.include_closed else "open"
     issue_state = "all" if ingest_cfg.include_closed else "open"
+    pr_endpoint = f"pulls?state={pr_state}"
+    issue_endpoint = f"issues?state={issue_state}"
+
+    if should_resume:
+        connector.restore_pagination_checkpoint(
+            endpoint=pr_endpoint,
+            page=pr_page,
+            per_page=ingest_cfg.page_size,
+            query=state.get("pr_next_query"),
+        )
+        connector.restore_pagination_checkpoint(
+            endpoint=issue_endpoint,
+            page=issue_page,
+            per_page=ingest_cfg.page_size,
+            query=state.get("issue_next_query"),
+        )
 
     total_prs = 0
     total_issues = 0
@@ -80,6 +96,16 @@ def ingest_github_to_sqlite(
                 repo,
                 pr_next_page=pr_page,
                 issue_next_page=issue_page,
+                pr_next_query=connector.get_pagination_checkpoint(
+                    endpoint=pr_endpoint,
+                    page=pr_page,
+                    per_page=ingest_cfg.page_size,
+                ),
+                issue_next_query=connector.get_pagination_checkpoint(
+                    endpoint=issue_endpoint,
+                    page=issue_page,
+                    per_page=ingest_cfg.page_size,
+                ),
                 phase="prs",
                 completed=False,
             )
@@ -112,6 +138,16 @@ def ingest_github_to_sqlite(
                     repo,
                     pr_next_page=pr_page,
                     issue_next_page=issue_page,
+                    pr_next_query=connector.get_pagination_checkpoint(
+                        endpoint=pr_endpoint,
+                        page=pr_page,
+                        per_page=ingest_cfg.page_size,
+                    ),
+                    issue_next_query=connector.get_pagination_checkpoint(
+                        endpoint=issue_endpoint,
+                        page=issue_page,
+                        per_page=ingest_cfg.page_size,
+                    ),
                     phase="issues",
                     completed=False,
                 )
@@ -135,6 +171,8 @@ def ingest_github_to_sqlite(
         repo,
         pr_next_page=pr_page,
         issue_next_page=issue_page,
+        pr_next_query=None,
+        issue_next_query=None,
         phase=final_phase,
         completed=completed,
     )
