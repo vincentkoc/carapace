@@ -1,0 +1,13 @@
+labels:
+  canonical: dedupe:parent
+  duplicate: dedupe:child
+  linked_pair: triage:needs-review
+  related: triage:needs-review
+  quarantine: triage:blocked
+  noise_suppressed: triage:blocked
+  close_candidate: close:superseded
+  ready_human: triage:needs-review
+
+action:
+  safe_mode: true
+  queue_on_suppress: true
