@@ -209,3 +209,4 @@ __marimo__/
 # Carapace runtime artifacts
 .carapace/
 carapace-out/
+triage.md
