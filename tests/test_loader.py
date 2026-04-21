@@ -8,6 +8,32 @@ class FakeConnector:
     def __init__(self) -> None:
         self.pull_calls = []
         self.issue_calls = []
+        self.restore_calls = []
+        self.checkpoints = {}
+
+    def restore_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+        query: str | None = None,
+    ) -> None:
+        self.restore_calls.append((endpoint, page, per_page, query))
+        key = (endpoint, page, per_page)
+        if query is None:
+            self.checkpoints.pop(key, None)
+        else:
+            self.checkpoints[key] = query
+
+    def get_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+    ) -> str | None:
+        return self.checkpoints.get((endpoint, page, per_page))
 
     def fetch_pull_page(
         self,
@@ -20,6 +46,7 @@ class FakeConnector:
         enrich_comments: bool = False,
     ):
         self.pull_calls.append((page, per_page, state, include_drafts, enrich_details, enrich_comments))
+        self.checkpoints[(f"pulls?state={state}", page + 1, per_page)] = f"pull-page-{page + 1}"
         if page == 1:
             return [
                 SourceEntity(
@@ -50,6 +77,7 @@ class FakeConnector:
 
     def fetch_issue_page(self, *, page: int, per_page: int = 100, state: str = "open"):
         self.issue_calls.append((page, per_page, state))
+        self.checkpoints[(f"issues?state={state}", page + 1, per_page)] = f"issue-page-{page + 1}"
         return []
 
 
@@ -115,3 +143,31 @@ def test_loader_restarts_from_page_one_after_completed_cycle(tmp_path) -> None:
     )
     new_calls = connector.pull_calls[prior_calls:]
     assert new_calls[0][0] == 1
+
+
+def test_loader_restores_persisted_issue_cursor_on_resume(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "carapace.db")
+    connector = FakeConnector()
+    cfg = IngestConfig(include_issues=True, page_size=100, resume=True, state_checkpoint_interval_pages=1)
+    issue_query = "https://api.github.com/repositories/1/issues?state=open&per_page=100&page=191&after=cursor-190"
+
+    storage.save_ingest_state(
+        "acme/repo",
+        pr_next_page=3,
+        issue_next_page=191,
+        pr_next_query="pull-page-3",
+        issue_next_query=issue_query,
+        phase="issues",
+        completed=False,
+    )
+
+    ingest_github_to_sqlite(
+        connector,
+        storage,
+        repo="acme/repo",
+        ingest_cfg=cfg,
+        max_prs=0,
+        max_issues=0,
+    )
+
+    assert ("issues?state=open", 191, 100, issue_query) in connector.restore_calls

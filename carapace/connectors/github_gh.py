@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +23,8 @@ _HARD_ISSUE_RE = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#(\d+)
 _SOFT_ISSUE_RE = re.compile(r"#(\d+)")
 _GH_ENTITY_URL_RE = re.compile(r"github\\.com/[^\\s/]+/[^\\s/]+/(?:issues|pull)/(\\d+)", re.IGNORECASE)
 _RATE_LIMIT_RE = re.compile(r"(?:api|secondary) rate limit", re.IGNORECASE)
+_NEXT_LINK_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+_END_OF_PAGINATION = "__END_OF_PAGINATION__"
 logger = logging.getLogger(__name__)
 
 
@@ -135,6 +138,7 @@ class GithubGhClient:
         self.rate_limit_max_sleep_seconds = max(1.0, rate_limit_max_sleep_seconds)
         self._rate_limit_lock = threading.Lock()
         self._global_backoff_until = 0.0
+        self._page_cursor_queries: dict[tuple[str, int, int], str] = {}
 
     def get_paginated(self, endpoint: str, per_page: int = 100, max_items: int | None = None) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -150,15 +154,58 @@ class GithubGhClient:
         return items
 
     def get_page(self, endpoint: str, *, page: int, per_page: int = 100) -> list[dict[str, Any]]:
-        # TODO: Add explicit GitHub rate-limit backoff/retry strategy for long-running service mode.
-        query = f"{endpoint}{'&' if '?' in endpoint else '?'}per_page={per_page}&page={page}"
-        payload = self._api_json(query)
+        query = self._page_cursor_queries.get((endpoint, page, per_page))
+        if query == _END_OF_PAGINATION:
+            return []
+        if query is None:
+            query = f"{endpoint}{'&' if '?' in endpoint else '?'}per_page={per_page}&page={page}"
+        payload, headers = self._api_json_with_headers(query)
+        next_query = self._extract_next_query(headers.get("link"))
+        if next_query:
+            self._page_cursor_queries[(endpoint, page + 1, per_page)] = next_query
+        else:
+            self._page_cursor_queries[(endpoint, page + 1, per_page)] = _END_OF_PAGINATION
         if not isinstance(payload, list):
             return []
         return payload
 
+    def restore_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+        query: str | None = None,
+    ) -> None:
+        key = (endpoint, page, per_page)
+        if query:
+            self._page_cursor_queries[key] = query
+        else:
+            self._page_cursor_queries.pop(key, None)
+
+    def get_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+    ) -> str | None:
+        query = self._page_cursor_queries.get((endpoint, page, per_page))
+        if query in {None, _END_OF_PAGINATION}:
+            return None
+        return query
+
     def _api_json(self, endpoint: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
-        cmd = [self.gh_bin, "api", f"repos/{self.repo}/{endpoint.lstrip('/')}" if not endpoint.startswith("repos/") else endpoint]
+        payload, _headers = self._api_json_with_headers(endpoint, method=method, body=body)
+        return payload
+
+    def _api_json_with_headers(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+    ) -> tuple[Any, dict[str, str]]:
+        cmd = [self.gh_bin, "api", self._api_target(endpoint), "-i"]
         cmd.extend(["-X", method])
         cmd.extend(["-H", "Accept: application/vnd.github+json"])
         for attempt in range(self.rate_limit_retries + 1):
@@ -176,10 +223,7 @@ class GithubGhClient:
                 proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
 
             if proc.returncode == 0:
-                output = proc.stdout.strip()
-                if not output:
-                    return None
-                return json.loads(output)
+                return self._parse_api_response(proc.stdout)
 
             stderr = proc.stderr.strip()
             if not _RATE_LIMIT_RE.search(stderr):
@@ -208,6 +252,43 @@ class GithubGhClient:
                 retry_after_seconds=retry_after_seconds,
             )
         raise RuntimeError(f"gh api failed unexpectedly after retries for endpoint={endpoint}")
+
+    def _api_target(self, endpoint: str) -> str:
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint
+        if endpoint.startswith("repos/"):
+            return endpoint
+        return f"repos/{self.repo}/{endpoint.lstrip('/')}"
+
+    def _parse_api_response(self, output: str) -> tuple[Any, dict[str, str]]:
+        raw = output.strip()
+        if not raw:
+            return None, {}
+        header_block, separator, body = raw.partition("\n\n")
+        if not separator or not header_block.startswith("HTTP/"):
+            return json.loads(raw), {}
+        headers: dict[str, str] = {}
+        for line in header_block.splitlines()[1:]:
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+        body = body.strip()
+        if not body:
+            return None, headers
+        return json.loads(body), headers
+
+    def _extract_next_query(self, link_header: str | None) -> str | None:
+        if not link_header:
+            return None
+        match = _NEXT_LINK_RE.search(link_header)
+        if not match:
+            return None
+        next_url = match.group(1)
+        parts = urlsplit(next_url)
+        if parts.scheme and parts.netloc:
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+        return next_url
 
     def _wait_for_global_backoff(self) -> None:
         while True:
@@ -283,6 +364,25 @@ class GithubGhSourceConnector(SourceConnector):
             secondary_backoff_base_seconds=secondary_backoff_base_seconds,
             rate_limit_max_sleep_seconds=rate_limit_max_sleep_seconds,
         )
+
+    def restore_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+        query: str | None = None,
+    ) -> None:
+        self.client.restore_pagination_checkpoint(endpoint=endpoint, page=page, per_page=per_page, query=query)
+
+    def get_pagination_checkpoint(
+        self,
+        *,
+        endpoint: str,
+        page: int,
+        per_page: int = 100,
+    ) -> str | None:
+        return self.client.get_pagination_checkpoint(endpoint=endpoint, page=page, per_page=per_page)
 
     def fetch_open_entities(
         self,
@@ -622,6 +722,7 @@ class GithubGhSinkConnector(SinkConnector):
         rate_limit_retries: int = 2,
         secondary_backoff_base_seconds: float = 5.0,
         rate_limit_max_sleep_seconds: float = 90.0,
+        disable_apply_labels: bool = True,
     ) -> None:
         self.repo = repo
         self.client = GithubGhClient(
@@ -633,14 +734,68 @@ class GithubGhSinkConnector(SinkConnector):
         )
         self.entity_number_resolver = entity_number_resolver
         self.dry_run = dry_run
+        self.disable_apply_labels = disable_apply_labels
+        self._label_cache: set[str] | None = None
+
+    def _fetch_repo_labels(self) -> set[str]:
+        if self._label_cache is not None:
+            return self._label_cache
+
+        try:
+            labels_payload = self.client.get_paginated("labels")
+        except RuntimeError as exc:
+            logger.warning("Unable to fetch repository labels for %s; skipping label applications. %s", self.repo, exc)
+            self._label_cache = set()
+            return set()
+
+        label_names: set[str] = set()
+        for item in labels_payload:
+            if isinstance(item, dict):
+                label_name = item.get("name")
+                if isinstance(label_name, str):
+                    label_names.add(label_name)
+        self._label_cache = label_names
+        return label_names
+
+    def _filter_existing_labels(self, labels: list[str]) -> list[str]:
+        if not labels:
+            return []
+
+        known_labels = self._fetch_repo_labels()
+        if not known_labels:
+            return []
+
+        missing: list[str] = []
+        filtered: list[str] = []
+        for label in labels:
+            if label in known_labels:
+                if label not in filtered:
+                    filtered.append(label)
+            else:
+                missing.append(label)
+
+        if missing:
+            logger.warning("Skipping labels not present in repository %s: %s", self.repo, ", ".join(sorted(set(missing))))
+        return filtered
 
     def apply_labels(self, entity_id: str, labels: list[str]) -> None:
-        if not labels:
+        if self.disable_apply_labels:
+            logger.debug(
+                "Label application skipped for %s due to temporary kill switch (FIXME: remove once label routing is production-ready).",
+                entity_id,
+            )
             return
-        number = self.entity_number_resolver(entity_id)
         if self.dry_run:
             return
-        self.client._api_json(f"issues/{number}/labels", method="POST", body={"labels": labels})
+        filtered_labels = self._filter_existing_labels(labels)
+        if not filtered_labels:
+            return
+        number = self.entity_number_resolver(entity_id)
+        self.client._api_json(
+            f"issues/{number}/labels",
+            method="POST",
+            body={"labels": filtered_labels},
+        )
 
     def post_comment(self, entity_id: str, body: str) -> None:
         if not body:

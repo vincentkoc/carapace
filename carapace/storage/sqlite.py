@@ -123,6 +123,8 @@ class SQLiteStorage:
                   repo TEXT PRIMARY KEY,
                   pr_next_page INTEGER NOT NULL DEFAULT 1,
                   issue_next_page INTEGER NOT NULL DEFAULT 1,
+                  pr_next_query TEXT,
+                  issue_next_query TEXT,
                   phase TEXT NOT NULL DEFAULT 'prs',
                   last_sync_at TEXT,
                   completed INTEGER NOT NULL DEFAULT 0
@@ -164,6 +166,7 @@ class SQLiteStorage:
                 """
             )
             self._ensure_ingest_columns(conn)
+            self._ensure_ingest_state_columns(conn)
             self._ensure_fingerprint_cache_columns(conn)
 
     @staticmethod
@@ -178,6 +181,20 @@ class SQLiteStorage:
             to_add.append("ALTER TABLE ingest_entities ADD COLUMN last_enriched_at TEXT")
         if "enrich_level" not in columns:
             to_add.append("ALTER TABLE ingest_entities ADD COLUMN enrich_level TEXT")
+
+        for statement in to_add:
+            conn.execute(statement)
+
+    @staticmethod
+    def _ensure_ingest_state_columns(conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(ingest_state)").fetchall()
+        columns = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+
+        to_add = []
+        if "pr_next_query" not in columns:
+            to_add.append("ALTER TABLE ingest_state ADD COLUMN pr_next_query TEXT")
+        if "issue_next_query" not in columns:
+            to_add.append("ALTER TABLE ingest_state ADD COLUMN issue_next_query TEXT")
 
         for statement in to_add:
             conn.execute(statement)
@@ -495,7 +512,7 @@ class SQLiteStorage:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT repo, pr_next_page, issue_next_page, phase, last_sync_at, completed
+                SELECT repo, pr_next_page, issue_next_page, pr_next_query, issue_next_query, phase, last_sync_at, completed
                 FROM ingest_state
                 WHERE repo = ?
                 """,
@@ -506,6 +523,8 @@ class SQLiteStorage:
                 "repo": repo,
                 "pr_next_page": 1,
                 "issue_next_page": 1,
+                "pr_next_query": None,
+                "issue_next_query": None,
                 "phase": "prs",
                 "last_sync_at": None,
                 "completed": 0,
@@ -518,6 +537,8 @@ class SQLiteStorage:
         *,
         pr_next_page: int,
         issue_next_page: int,
+        pr_next_query: str | None,
+        issue_next_query: str | None,
         phase: str,
         completed: bool,
     ) -> None:
@@ -525,11 +546,13 @@ class SQLiteStorage:
             conn.execute(
                 """
                 INSERT INTO ingest_state (
-                  repo, pr_next_page, issue_next_page, phase, last_sync_at, completed
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  repo, pr_next_page, issue_next_page, pr_next_query, issue_next_query, phase, last_sync_at, completed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(repo) DO UPDATE SET
                   pr_next_page=excluded.pr_next_page,
                   issue_next_page=excluded.issue_next_page,
+                  pr_next_query=excluded.pr_next_query,
+                  issue_next_query=excluded.issue_next_query,
                   phase=excluded.phase,
                   last_sync_at=excluded.last_sync_at,
                   completed=excluded.completed
@@ -538,6 +561,8 @@ class SQLiteStorage:
                     repo,
                     pr_next_page,
                     issue_next_page,
+                    pr_next_query,
+                    issue_next_query,
                     phase,
                     datetime.now(UTC).isoformat(),
                     1 if completed else 0,

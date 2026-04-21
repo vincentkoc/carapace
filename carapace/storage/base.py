@@ -45,6 +45,8 @@ class StorageBackend(Protocol):
         *,
         pr_next_page: int,
         issue_next_page: int,
+        pr_next_query: str | None,
+        issue_next_query: str | None,
         phase: str,
         completed: bool,
     ) -> None: ...
