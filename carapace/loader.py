@@ -42,6 +42,18 @@ def ingest_github_to_sqlite(
     pr_endpoint = f"pulls?state={pr_state}"
     issue_endpoint = f"issues?state={issue_state}"
 
+    # Older checkpoints do not persist GitHub cursor state for the issues feed.
+    # Restart from page 1 instead of crashing on large repos when resume reaches page 100+.
+    if should_resume and state["phase"] == "issues" and issue_page > 1 and not state.get("issue_next_query"):
+        logger.warning(
+            "Ingest resume for %s is missing issue cursor state at issue_page=%s; restarting full ingest from page 1.",
+            repo,
+            issue_page,
+        )
+        should_resume = False
+        pr_page = 1
+        issue_page = 1
+
     if should_resume:
         connector.restore_pagination_checkpoint(
             endpoint=pr_endpoint,

@@ -171,3 +171,31 @@ def test_loader_restores_persisted_issue_cursor_on_resume(tmp_path) -> None:
     )
 
     assert ("issues?state=open", 191, 100, issue_query) in connector.restore_calls
+
+
+def test_loader_restarts_from_page_one_when_old_issue_resume_lacks_cursor(tmp_path, caplog) -> None:
+    storage = SQLiteStorage(tmp_path / "carapace.db")
+    connector = FakeConnector()
+    cfg = IngestConfig(include_issues=True, page_size=100, resume=True, state_checkpoint_interval_pages=1)
+
+    storage.save_ingest_state(
+        "acme/repo",
+        pr_next_page=3,
+        issue_next_page=191,
+        pr_next_query="pull-page-3",
+        issue_next_query=None,
+        phase="issues",
+        completed=False,
+    )
+
+    ingest_github_to_sqlite(
+        connector,
+        storage,
+        repo="acme/repo",
+        ingest_cfg=cfg,
+        max_prs=0,
+        max_issues=0,
+    )
+
+    assert connector.pull_calls[0][0] == 1
+    assert "restarting full ingest from page 1" in caplog.text
