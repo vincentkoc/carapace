@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class HookName(str, Enum):
+class HookName(StrEnum):
     BEFORE_NORMALIZE = "before_normalize"
     AFTER_NORMALIZE = "after_normalize"
     BEFORE_LOW_PASS = "before_low_pass"

@@ -56,6 +56,7 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
     app = create_app(config)
     client = TestClient(app)
 
+    revision = storage.web_source_revision()
     graph = client.get(f"/api/repos/{repo}/graph")
     assert graph.status_code == 200
     graph_v1 = client.get(f"/api/v1/repos/{repo}/graph")
@@ -83,6 +84,16 @@ def test_webapp_repo_path_routes_accept_owner_repo(tmp_path: Path) -> None:
 
     authors = client.get(f"/api/repos/{repo}/authors")
     assert authors.status_code == 200
+    assert storage.web_source_revision() == revision
+
+    # A correction to an ingested entity need not change its upstream timestamp.
+    corrected = entities[0].model_copy(update={"title": "Corrected report title"})
+    storage.upsert_ingest_entities(repo, [corrected])
+    for url in ("graph", "graph/atlas"):
+        refreshed = client.get(f"/api/repos/{repo}/{url}")
+        assert refreshed.status_code == 200
+        labels = {node["data"]["label"] for node in refreshed.json()["elements"]["nodes"]}
+        assert corrected.title in labels
 
 
 def test_webapp_graph_falls_back_to_ingest_when_run_has_no_multi_clusters(tmp_path: Path) -> None:
@@ -238,3 +249,16 @@ def test_webapp_cluster_detail_from_ingest_without_runs(tmp_path: Path) -> None:
     payload = detail.json()
     assert payload["mode"] == "cluster_detail_ingest"
     assert payload["node_count"] >= 2
+
+    storage.upsert_author_metrics_cache(repo, {"alice": (17, 0.8)})
+    authors = client.get(f"/api/repos/{repo}/authors").json()["authors"]
+    assert next(row for row in authors if row["author"] == "alice")["merged_pr_count"] == 17
+
+    # Closing a seen issue keeps both the row count and the issue/PR breakdown.
+    # Refresh the same app and a new app to exercise both cache layers.
+    changed = storage.mark_entities_closed_except(repo, kind="issue", seen_entity_ids=set())
+    assert changed == 1
+    for active_client in (client, TestClient(create_app(config))):
+        refreshed = active_client.get(f"/api/repos/{repo}/clusters?min_members=2")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["clusters"] == []

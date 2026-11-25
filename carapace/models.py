@@ -3,41 +3,41 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class EntityKind(str, Enum):
+class EntityKind(StrEnum):
     PR = "pr"
     ISSUE = "issue"
     TICKET = "ticket"
 
 
-class CIStatus(str, Enum):
+class CIStatus(StrEnum):
     PASS = "pass"
     FAIL = "fail"
     UNKNOWN = "unknown"
 
 
-class FilterState(str, Enum):
+class FilterState(StrEnum):
     PASS = "pass"
     SUPPRESS = "suppress"
     SKIP = "skip"
 
 
-class LowPassAction(str, Enum):
+class LowPassAction(StrEnum):
     IGNORE = "ignore"
     CLOSE = "close"
 
 
-class EdgeTier(str, Enum):
+class EdgeTier(StrEnum):
     STRONG = "strong"
     WEAK = "weak"
 
 
-class DecisionState(str, Enum):
+class DecisionState(StrEnum):
     CANONICAL = "canonical"
     DUPLICATE = "duplicate_of"
     RELATED = "related_non_duplicate"

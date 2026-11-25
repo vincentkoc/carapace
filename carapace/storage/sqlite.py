@@ -154,6 +154,12 @@ class SQLiteStorage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_author_metrics_cache_repo_trust ON author_metrics_cache(repo, trust_score DESC);
 
+                CREATE TABLE IF NOT EXISTS web_source_revision (
+                  id INTEGER PRIMARY KEY CHECK (id = 1),
+                  revision INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO web_source_revision (id, revision) VALUES (1, 0);
+
                 CREATE TABLE IF NOT EXISTS json_cache (
                   repo TEXT NOT NULL,
                   cache_key TEXT NOT NULL,
@@ -168,6 +174,20 @@ class SQLiteStorage:
             self._ensure_ingest_columns(conn)
             self._ensure_ingest_state_columns(conn)
             self._ensure_fingerprint_cache_columns(conn)
+            # Triggers see committed changes from other processes, including older CLI
+            # writers. Cache fills write only json_cache and must leave the revision alone.
+            for table in ("runs", "ingest_entities", "author_metrics_cache"):
+                for event in ("INSERT", "UPDATE", "DELETE"):
+                    conn.execute(
+                        f"CREATE TRIGGER IF NOT EXISTS web_revision_{table}_{event} "
+                        f"AFTER {event} ON {table} BEGIN "
+                        "UPDATE web_source_revision SET revision = revision + 1 WHERE id = 1; END"
+                    )
+
+    def web_source_revision(self) -> str:
+        with self._connect() as conn:
+            revision = conn.execute("SELECT revision FROM web_source_revision WHERE id = 1").fetchone()[0]
+        return f"source:{revision}"
 
     @staticmethod
     def _ensure_ingest_columns(conn: sqlite3.Connection) -> None:
